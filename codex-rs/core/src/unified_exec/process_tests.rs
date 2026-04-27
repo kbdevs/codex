@@ -81,9 +81,13 @@ async fn remote_process(write_status: WriteStatus) -> UnifiedExecProcess {
         }),
     };
 
-    UnifiedExecProcess::from_exec_server_started(started, SandboxType::None)
-        .await
-        .expect("remote process should start")
+    UnifiedExecProcess::from_exec_server_started(
+        started,
+        SandboxType::None,
+        /*sandbox_violation_context*/ None,
+    )
+    .await
+    .expect("remote process should start")
 }
 
 #[tokio::test]
@@ -152,9 +156,13 @@ async fn remote_process_waits_for_early_exit_event() {
         let _ = wake_tx.send(1);
     });
 
-    let process = UnifiedExecProcess::from_exec_server_started(started, SandboxType::None)
-        .await
-        .expect("remote process should observe early exit");
+    let process = UnifiedExecProcess::from_exec_server_started(
+        started,
+        SandboxType::None,
+        /*sandbox_violation_context*/ None,
+    )
+    .await
+    .expect("remote process should observe early exit");
 
     assert!(process.has_exited());
     assert_eq!(process.exit_code(), Some(17));

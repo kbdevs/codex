@@ -12,6 +12,7 @@ use crate::exec::ExecExpiration;
 use crate::exec::StdoutStream;
 use crate::exec::WindowsSandboxFilesystemOverrides;
 use crate::exec::execute_exec_request;
+use crate::security_events::SandboxViolationAuditContext;
 #[cfg(target_os = "macos")]
 use crate::spawn::CODEX_SANDBOX_ENV_VAR;
 use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
@@ -33,6 +34,7 @@ use std::collections::HashMap;
 pub(crate) struct ExecOptions {
     pub(crate) expiration: ExecExpiration,
     pub(crate) capture_policy: ExecCapturePolicy,
+    pub(crate) sandbox_violation_context: Option<SandboxViolationAuditContext>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +60,7 @@ pub struct ExecRequest {
     pub file_system_sandbox_policy: FileSystemSandboxPolicy,
     pub network_sandbox_policy: NetworkSandboxPolicy,
     pub(crate) windows_sandbox_filesystem_overrides: Option<WindowsSandboxFilesystemOverrides>,
+    pub(crate) sandbox_violation_context: Option<SandboxViolationAuditContext>,
     pub arg0: Option<String>,
 }
 
@@ -95,6 +98,7 @@ impl ExecRequest {
             file_system_sandbox_policy,
             network_sandbox_policy,
             windows_sandbox_filesystem_overrides: None,
+            sandbox_violation_context: None,
             arg0,
         }
     }
@@ -129,6 +133,7 @@ impl ExecRequest {
         let ExecOptions {
             expiration,
             capture_policy,
+            sandbox_violation_context,
         } = options;
         if !network_sandbox_policy.is_enabled() {
             env.insert(
@@ -156,6 +161,7 @@ impl ExecRequest {
             file_system_sandbox_policy,
             network_sandbox_policy,
             windows_sandbox_filesystem_overrides: None,
+            sandbox_violation_context,
             arg0,
         }
     }

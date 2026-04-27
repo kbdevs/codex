@@ -123,6 +123,9 @@ pub(super) async fn try_run_zsh_fork(
     let options = ExecOptions {
         expiration: req.timeout_ms.into(),
         capture_policy: ExecCapturePolicy::ShellTool,
+        sandbox_violation_context: Some(
+            crate::security_events::SandboxViolationAuditContext::from_tool_ctx(ctx),
+        ),
     };
     let sandbox_exec_request = attempt
         .env_for(
@@ -147,6 +150,7 @@ pub(super) async fn try_run_zsh_fork(
         file_system_sandbox_policy,
         network_sandbox_policy,
         windows_sandbox_filesystem_overrides: _windows_sandbox_filesystem_overrides,
+        sandbox_violation_context,
         arg0,
     } = sandbox_exec_request;
     let ParsedShellCommand { script, login, .. } = extract_shell_script(&command)?;
@@ -171,6 +175,7 @@ pub(super) async fn try_run_zsh_fork(
         sandbox_policy_cwd,
         codex_linux_sandbox_exe: ctx.turn.codex_linux_sandbox_exe.clone(),
         use_legacy_landlock: ctx.turn.features.use_legacy_landlock(),
+        sandbox_violation_context,
     };
     let main_execve_wrapper_exe = ctx
         .session
@@ -222,13 +227,20 @@ pub(super) async fn try_run_zsh_fork(
         main_execve_wrapper_exe,
         escalation_policy,
     );
+    let sandbox_violation_context = command_executor.sandbox_violation_context.clone();
 
     let exec_result = escalate_server
         .exec(exec_params, cancel_token, Arc::new(command_executor))
         .await
         .map_err(|err| ToolError::Rejected(err.to_string()))?;
 
-    map_exec_result(attempt.sandbox, exec_result).map(Some)
+    map_exec_result(
+        attempt.sandbox,
+        exec_result,
+        sandbox_violation_context.as_ref(),
+    )
+    .await
+    .map(Some)
 }
 
 pub(crate) async fn prepare_unified_exec_zsh_fork(
@@ -272,6 +284,7 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
         sandbox_policy_cwd: exec_request.windows_sandbox_policy_cwd.clone(),
         codex_linux_sandbox_exe: ctx.turn.codex_linux_sandbox_exe.clone(),
         use_legacy_landlock: ctx.turn.features.use_legacy_landlock(),
+        sandbox_violation_context: exec_request.sandbox_violation_context.clone(),
     };
     let escalation_policy = CoreShellActionProvider {
         policy: Arc::clone(&exec_policy),
@@ -756,6 +769,7 @@ struct CoreShellCommandExecutor {
     sandbox_policy_cwd: AbsolutePathBuf,
     codex_linux_sandbox_exe: Option<PathBuf>,
     use_legacy_landlock: bool,
+    sandbox_violation_context: Option<crate::security_events::SandboxViolationAuditContext>,
 }
 
 struct PrepareSandboxedExecParams<'a> {
@@ -802,6 +816,7 @@ impl ShellCommandExecutor for CoreShellCommandExecutor {
                 file_system_sandbox_policy: self.file_system_sandbox_policy.clone(),
                 network_sandbox_policy: self.network_sandbox_policy,
                 windows_sandbox_filesystem_overrides: None,
+                sandbox_violation_context: self.sandbox_violation_context.clone(),
                 arg0: self.arg0.clone(),
             },
             /*stdout_stream*/ None,
@@ -916,6 +931,7 @@ impl CoreShellCommandExecutor {
         let options = ExecOptions {
             expiration: ExecExpiration::DefaultTimeout,
             capture_policy: ExecCapturePolicy::ShellTool,
+            sandbox_violation_context: self.sandbox_violation_context.clone(),
         };
         let exec_request = sandbox_manager.transform(SandboxTransformRequest {
             command,
@@ -979,9 +995,10 @@ fn extract_shell_script(command: &[String]) -> Result<ParsedShellCommand, ToolEr
     ))
 }
 
-fn map_exec_result(
+async fn map_exec_result(
     sandbox: SandboxType,
     result: ExecResult,
+    sandbox_violation_context: Option<&crate::security_events::SandboxViolationAuditContext>,
 ) -> Result<ExecToolCallOutput, ToolError> {
     let output = ExecToolCallOutput {
         exit_code: result.exit_code,
@@ -999,7 +1016,13 @@ fn map_exec_result(
     }
 
     if is_filesystem_sandbox_violation(sandbox, &output) {
-        record_filesystem_sandbox_violation(sandbox, &output);
+        if let Some(violation) = record_filesystem_sandbox_violation(sandbox, &output) {
+            crate::security_events::record_sandbox_violation_audit(
+                sandbox_violation_context,
+                &codex_sandboxing::SandboxViolationEvent::FileSystem(violation),
+            )
+            .await;
+        }
         return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
             output: Box::new(output),
             network_policy_decision: None,

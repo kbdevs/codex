@@ -96,6 +96,7 @@ pub struct UnifiedExecRuntime<'a> {
 
 fn unified_exec_options(
     network_denial_cancellation_token: Option<CancellationToken>,
+    sandbox_violation_context: Option<crate::security_events::SandboxViolationAuditContext>,
 ) -> ExecOptions {
     let mut expiration = ExecExpiration::DefaultTimeout;
     if let Some(cancellation) = network_denial_cancellation_token {
@@ -104,6 +105,7 @@ fn unified_exec_options(
     ExecOptions {
         expiration,
         capture_policy: ExecCapturePolicy::ShellTool,
+        sandbox_violation_context,
     }
 }
 
@@ -289,7 +291,10 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             let command =
                 build_sandbox_command(&command, &req.cwd, &env, req.additional_permissions.clone())
                     .map_err(|_| ToolError::Rejected("missing command line for PTY".to_string()))?;
-            let options = unified_exec_options(attempt.network_denial_cancellation_token.clone());
+            let options = unified_exec_options(
+                attempt.network_denial_cancellation_token.clone(),
+                Some(crate::security_events::SandboxViolationAuditContext::from_tool_ctx(ctx)),
+            );
             let mut exec_env = attempt
                 .env_for(command, options, managed_network)
                 .map_err(|err| ToolError::Codex(err.into()))?;
@@ -340,7 +345,10 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
         let command =
             build_sandbox_command(&command, &req.cwd, &env, req.additional_permissions.clone())
                 .map_err(|_| ToolError::Rejected("missing command line for PTY".to_string()))?;
-        let options = unified_exec_options(attempt.network_denial_cancellation_token.clone());
+        let options = unified_exec_options(
+            attempt.network_denial_cancellation_token.clone(),
+            Some(crate::security_events::SandboxViolationAuditContext::from_tool_ctx(ctx)),
+        );
         let mut exec_env = attempt
             .env_for(command, options, managed_network)
             .map_err(|err| ToolError::Codex(err.into()))?;
@@ -378,7 +386,7 @@ mod tests {
     #[test]
     fn unified_exec_options_combines_default_timeout_with_network_denial_cancellation() {
         let cancellation = CancellationToken::new();
-        let options = unified_exec_options(Some(cancellation.clone()));
+        let options = unified_exec_options(Some(cancellation.clone()), None);
 
         assert_eq!(options.capture_policy, ExecCapturePolicy::ShellTool);
         match options.expiration {

@@ -244,8 +244,8 @@ fn commands_for_intercepted_exec_policy_parses_plain_shell_wrappers() {
     assert!(!candidate_commands.used_complex_parsing);
 }
 
-#[test]
-fn map_exec_result_preserves_stdout_and_stderr() {
+#[tokio::test]
+async fn map_exec_result_preserves_stdout_and_stderr() {
     let out = map_exec_result(
         SandboxType::None,
         ExecResult {
@@ -256,7 +256,9 @@ fn map_exec_result_preserves_stdout_and_stderr() {
             duration: Duration::from_millis(1),
             timed_out: false,
         },
+        /*sandbox_violation_context*/ None,
     )
+    .await
     .unwrap();
 
     assert_eq!(out.stdout.text, "out");
