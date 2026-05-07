@@ -345,7 +345,7 @@ async fn windows_auto_mode_prompt_requests_enabling_sandbox_feature() {
         .into_iter()
         .find(|preset| preset.id == "auto")
         .expect("auto preset");
-    chat.open_windows_sandbox_enable_prompt(preset);
+    chat.open_windows_sandbox_enable_prompt(preset, /*profile_selection*/ None);
 
     let popup = render_bottom_popup(&chat, /*width*/ 120);
     assert!(
