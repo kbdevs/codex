@@ -13,7 +13,7 @@ pub(super) struct ListenerTaskContext {
     pub(super) thread_list_state_permit: Arc<Semaphore>,
     pub(super) fallback_model_provider: String,
     pub(super) codex_home: PathBuf,
-    pub(super) thread_queue_processor: Option<ThreadQueueRequestProcessor>,
+    pub(super) thread_queue_processor: ThreadQueueRequestProcessor,
 }
 
 struct UnloadingState {
@@ -323,9 +323,7 @@ pub(super) async fn ensure_listener_task_running(
                         fallback_model_provider.clone(),
                     )
                     .await;
-                    if let EventMsg::ThreadQueuedTurnDispatched(dispatched) = &event.msg
-                        && let Some(thread_queue_processor) = thread_queue_processor.as_ref()
-                    {
+                    if let EventMsg::ThreadQueuedTurnDispatched(dispatched) = &event.msg {
                         thread_queue_processor
                             .on_queued_turn_dispatched(
                                 conversation_id,

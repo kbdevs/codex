@@ -11,6 +11,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_list_state_permit: Arc<Semaphore>,
+    thread_queue_processor: ThreadQueueRequestProcessor,
 }
 
 impl TurnRequestProcessor {
@@ -25,6 +26,7 @@ impl TurnRequestProcessor {
         thread_state_manager: ThreadStateManager,
         thread_watch_manager: ThreadWatchManager,
         thread_list_state_permit: Arc<Semaphore>,
+        thread_queue_processor: ThreadQueueRequestProcessor,
     ) -> Self {
         Self {
             auth_manager,
@@ -36,6 +38,7 @@ impl TurnRequestProcessor {
             thread_state_manager,
             thread_watch_manager,
             thread_list_state_permit,
+            thread_queue_processor,
         }
     }
 
@@ -63,19 +66,6 @@ impl TurnRequestProcessor {
         self.thread_inject_items_response_inner(params)
             .await
             .map(|response| Some(response.into()))
-    }
-
-    pub(crate) async fn validate_thread_queued_turn(
-        &self,
-        params: TurnStartParams,
-    ) -> Result<(), JSONRPCErrorError> {
-        Self::validate_v2_input_limit(&params.input)?;
-        let (_, thread) = self.load_thread(&params.thread_id).await?;
-        thread
-            .validate_turn_start_params(params)
-            .await
-            .map_err(Self::prepare_turn_start_error)?;
-        Ok(())
     }
 
     pub(crate) async fn turn_steer(
@@ -337,14 +327,6 @@ impl TurnRequestProcessor {
         };
 
         Ok(TurnStartResponse { turn })
-    }
-
-    fn prepare_turn_start_error(err: CodexErr) -> JSONRPCErrorError {
-        match err {
-            CodexErr::InvalidRequest(message) => invalid_request(message),
-            CodexErr::Io(err) => config_load_error(&err),
-            err => internal_error(format!("failed to prepare turn start: {err}")),
-        }
     }
 
     fn start_turn_from_params_error(err: CodexErr) -> JSONRPCErrorError {
@@ -945,7 +927,7 @@ impl TurnRequestProcessor {
             thread_list_state_permit: self.thread_list_state_permit.clone(),
             fallback_model_provider: self.config.model_provider_id.clone(),
             codex_home: self.config.codex_home.to_path_buf(),
-            thread_queue_processor: None,
+            thread_queue_processor: self.thread_queue_processor.clone(),
         }
     }
 

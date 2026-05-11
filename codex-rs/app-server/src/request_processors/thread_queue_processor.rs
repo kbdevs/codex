@@ -13,30 +13,30 @@ use codex_app_server_protocol::ThreadQueueReorderResponse;
 
 #[derive(Clone)]
 pub(crate) struct ThreadQueueRequestProcessor {
+    auth_manager: Arc<AuthManager>,
     thread_manager: Arc<ThreadManager>,
     outgoing: Arc<OutgoingMessageSender>,
     config: Arc<Config>,
     thread_state_manager: ThreadStateManager,
     state_db: Option<StateDbHandle>,
-    turn_processor: TurnRequestProcessor,
 }
 
 impl ThreadQueueRequestProcessor {
     pub(crate) fn new(
+        auth_manager: Arc<AuthManager>,
         thread_manager: Arc<ThreadManager>,
         outgoing: Arc<OutgoingMessageSender>,
         config: Arc<Config>,
         thread_state_manager: ThreadStateManager,
         state_db: Option<StateDbHandle>,
-        turn_processor: TurnRequestProcessor,
     ) -> Self {
         Self {
+            auth_manager,
             thread_manager,
             outgoing,
             config,
             thread_state_manager,
             state_db,
-            turn_processor,
         }
     }
 
@@ -52,9 +52,15 @@ impl ThreadQueueRequestProcessor {
             ));
         }
         let state_db = self.state_db_for_materialized_thread(thread_id).await?;
-        self.turn_processor
-            .validate_thread_queued_turn(params.turn_start_params.clone())
-            .await?;
+        let thread = self
+            .thread_manager
+            .get_thread(thread_id)
+            .await
+            .map_err(|_| invalid_request(format!("thread not found: {thread_id}")))?;
+        thread
+            .validate_turn_start_params(params.turn_start_params.clone())
+            .await
+            .map_err(queued_turn_validation_error)?;
         let turn_start_params_json =
             serde_json::to_string(&params.turn_start_params).map_err(|err| {
                 internal_error(format!("failed to serialize queued turn params: {err}"))
@@ -137,9 +143,24 @@ impl ThreadQueueRequestProcessor {
         let Ok(thread) = self.thread_manager.get_thread(thread_id).await else {
             return;
         };
-        self.turn_processor
-            .start_memories_startup_task_for_thread(thread_id, thread)
+        self.start_memories_startup_task_for_thread(thread_id, thread)
             .await;
+    }
+
+    async fn start_memories_startup_task_for_thread(
+        &self,
+        thread_id: ThreadId,
+        thread: Arc<CodexThread>,
+    ) {
+        let config_snapshot = thread.config_snapshot().await;
+        codex_memories_write::start_memories_startup_task(
+            Arc::clone(&self.thread_manager),
+            Arc::clone(&self.auth_manager),
+            thread_id,
+            Arc::clone(&thread),
+            thread.config().await,
+            &config_snapshot.session_source,
+        );
     }
 
     async fn state_db_for_materialized_thread(
@@ -240,6 +261,14 @@ impl ThreadQueueRequestProcessor {
 fn parse_thread_id_for_request(thread_id: &str) -> Result<ThreadId, JSONRPCErrorError> {
     ThreadId::from_string(thread_id)
         .map_err(|err| invalid_request(format!("invalid thread id: {err}")))
+}
+
+fn queued_turn_validation_error(err: CodexErr) -> JSONRPCErrorError {
+    match err {
+        CodexErr::InvalidRequest(message) => invalid_request(message),
+        CodexErr::Io(err) => config_load_error(&err),
+        err => internal_error(format!("failed to prepare turn start: {err}")),
+    }
 }
 
 fn api_queued_turn_from_state(

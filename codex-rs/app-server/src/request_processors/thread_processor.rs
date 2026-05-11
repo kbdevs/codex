@@ -755,7 +755,7 @@ impl ThreadRequestProcessor {
             thread_list_state_permit: self.thread_list_state_permit.clone(),
             fallback_model_provider: self.config.model_provider_id.clone(),
             codex_home: self.config.codex_home.to_path_buf(),
-            thread_queue_processor: Some(self.thread_queue_processor.clone()),
+            thread_queue_processor: self.thread_queue_processor.clone(),
         }
     }
 
@@ -853,7 +853,7 @@ impl ThreadRequestProcessor {
             thread_list_state_permit: self.thread_list_state_permit.clone(),
             fallback_model_provider: self.config.model_provider_id.clone(),
             codex_home: self.config.codex_home.to_path_buf(),
-            thread_queue_processor: Some(self.thread_queue_processor.clone()),
+            thread_queue_processor: self.thread_queue_processor.clone(),
         };
         let request_trace = request_context.request_trace();
         let config_manager = self.config_manager.clone();

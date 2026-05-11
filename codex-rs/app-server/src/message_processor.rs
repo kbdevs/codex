@@ -377,6 +377,14 @@ impl MessageProcessor {
             thread_state_manager.clone(),
             state_db.clone(),
         );
+        let thread_queue_processor = ThreadQueueRequestProcessor::new(
+            auth_manager.clone(),
+            Arc::clone(&thread_manager),
+            outgoing.clone(),
+            Arc::clone(&config),
+            thread_state_manager.clone(),
+            state_db.clone(),
+        );
         let turn_processor = TurnRequestProcessor::new(
             auth_manager.clone(),
             Arc::clone(&thread_manager),
@@ -387,14 +395,7 @@ impl MessageProcessor {
             thread_state_manager.clone(),
             thread_watch_manager.clone(),
             Arc::clone(&thread_list_state_permit),
-        );
-        let thread_queue_processor = ThreadQueueRequestProcessor::new(
-            Arc::clone(&thread_manager),
-            outgoing.clone(),
-            Arc::clone(&config),
-            thread_state_manager.clone(),
-            state_db.clone(),
-            turn_processor.clone(),
+            thread_queue_processor.clone(),
         );
         let thread_processor = ThreadRequestProcessor::new(
             auth_manager.clone(),
