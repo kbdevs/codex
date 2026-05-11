@@ -346,6 +346,7 @@ use self::plugins::PluginsCacheState;
 mod plan_implementation;
 use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
 mod protocol;
+mod queued_sends;
 mod realtime;
 use self::realtime::RealtimeConversationUiState;
 mod reasoning_shortcuts;
@@ -976,6 +977,7 @@ pub(crate) struct ThreadInputState {
     rejected_steer_history_records: VecDeque<UserMessageHistoryRecord>,
     queued_user_messages: VecDeque<QueuedUserMessage>,
     queued_user_message_history_records: VecDeque<UserMessageHistoryRecord>,
+    queued_sends_paused_after_usage_limit: bool,
     user_turn_pending_start: bool,
     current_collaboration_mode: CollaborationMode,
     active_collaboration_mask: Option<CollaborationModeMask>,
@@ -2544,6 +2546,17 @@ impl ChatWidget {
         true
     }
 
+    fn defer_pending_steers_after_usage_limit(&mut self) {
+        while let Some(pending_steer) = self.input_queue.pending_steers.pop_front() {
+            self.input_queue
+                .rejected_steers_queue
+                .push_back(pending_steer.user_message);
+            self.input_queue
+                .rejected_steer_history_records
+                .push_back(pending_steer.history_record);
+        }
+    }
+
     fn handle_app_server_steer_rejected_error(
         &mut self,
         codex_error_info: &AppServerCodexErrorInfo,
@@ -2865,6 +2878,11 @@ impl ChatWidget {
     }
 
     fn on_rate_limit_error(&mut self, error_kind: RateLimitErrorKind, message: String) {
+        if matches!(error_kind, RateLimitErrorKind::UsageLimit) {
+            self.defer_pending_steers_after_usage_limit();
+            self.pause_queued_sends_after_limit_error();
+        }
+
         if !self.workspace_owner_usage_nudge_enabled() {
             self.on_error(message);
             return;
@@ -3137,6 +3155,9 @@ impl ChatWidget {
                 .input_queue
                 .queued_user_message_history_records
                 .clone(),
+            queued_sends_paused_after_usage_limit: self
+                .input_queue
+                .queued_sends_paused_after_usage_limit,
             user_turn_pending_start: self.input_queue.user_turn_pending_start,
             current_collaboration_mode: self.current_collaboration_mode.clone(),
             active_collaboration_mask: self.active_collaboration_mask.clone(),
@@ -3212,6 +3233,8 @@ impl ChatWidget {
             self.input_queue.queued_user_messages = input_state.queued_user_messages;
             self.input_queue.queued_user_message_history_records =
                 input_state.queued_user_message_history_records;
+            self.input_queue.queued_sends_paused_after_usage_limit =
+                input_state.queued_sends_paused_after_usage_limit;
             self.input_queue.queued_user_message_history_records.resize(
                 self.input_queue.queued_user_messages.len(),
                 UserMessageHistoryRecord::UserMessageText,
@@ -5015,6 +5038,14 @@ impl ChatWidget {
         }
 
         if key_event.kind == KeyEventKind::Press
+            && matches!(key_event.code, KeyCode::Enter)
+            && self.should_prompt_to_resume_queued_sends()
+        {
+            self.show_resume_queued_sends_prompt();
+            return;
+        }
+
+        if key_event.kind == KeyEventKind::Press
             && self.chat_keymap.edit_queued_message.is_pressed(key_event)
             && self.has_queued_follow_up_messages()
             && self.bottom_pane.no_modal_or_popup_active()
@@ -5423,7 +5454,10 @@ impl ChatWidget {
         user_message: UserMessage,
         action: QueuedInputAction,
     ) {
-        if !self.is_session_configured() || self.is_user_turn_pending_or_running() {
+        if self.input_queue.queued_sends_paused_after_usage_limit
+            || !self.is_session_configured()
+            || self.is_user_turn_pending_or_running()
+        {
             self.input_queue
                 .queued_user_messages
                 .push_back(QueuedUserMessage::new(user_message, action));
@@ -6301,7 +6335,9 @@ impl ChatWidget {
 
     // If idle and there are queued inputs, submit exactly one to start the next turn.
     pub(crate) fn maybe_send_next_queued_input(&mut self) -> bool {
-        if self.input_queue.suppress_queue_autosend {
+        if self.input_queue.suppress_queue_autosend
+            || self.input_queue.queued_sends_paused_after_usage_limit
+        {
             return false;
         }
         if self.is_user_turn_pending_or_running() {
@@ -6356,12 +6392,20 @@ impl ChatWidget {
 
     /// Rebuild and update the bottom-pane pending-input preview.
     fn refresh_pending_input_preview(&mut self) {
+        let queued_sends_were_paused = self.input_queue.queued_sends_paused_after_usage_limit;
+        if !self.has_queued_follow_up_messages() {
+            self.input_queue.queued_sends_paused_after_usage_limit = false;
+        }
         let preview = self.input_queue.preview();
         self.bottom_pane.set_pending_input_preview(
             preview.queued_messages,
             preview.pending_steers,
             preview.rejected_steers,
+            self.input_queue.queued_sends_paused_after_usage_limit,
         );
+        if queued_sends_were_paused && !self.input_queue.queued_sends_paused_after_usage_limit {
+            self.maybe_show_pending_rate_limit_prompt();
+        }
     }
 
     pub(crate) fn set_pending_thread_approvals(&mut self, threads: Vec<String>) {
@@ -6727,6 +6771,9 @@ impl ChatWidget {
     }
 
     fn maybe_show_pending_rate_limit_prompt(&mut self) {
+        if self.input_queue.queued_sends_paused_after_usage_limit {
+            return;
+        }
         if self.rate_limit_switch_prompt_hidden() {
             self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
             return;
