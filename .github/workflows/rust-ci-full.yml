@@ -4,7 +4,7 @@ run-name: >-
     (
       github.event_name == 'workflow_dispatch' &&
       inputs.windows_x64_archive_fanout == 'true' ||
-      github.ref_name == 'starr/ci-probe-xl-archive-shards-20260511-full-ci'
+      github.ref_name == 'starr/ci-probe-archive-4x16-20260511-full-ci'
     ) &&
     ' windows-x64-archive-fanout-xl' ||
     ''
@@ -772,7 +772,7 @@ jobs:
 
   windows_x64_test_archive_probe:
     name: Probe — build Windows x64 nextest archive on XL
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref_name == 'starr/ci-probe-xl-archive-shards-20260511' && inputs.windows_x64_archive_fanout == 'true') || github.ref_name == 'starr/ci-probe-xl-archive-shards-20260511-full-ci' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref_name == 'starr/ci-probe-archive-4x16-20260511' && inputs.windows_x64_archive_fanout == 'true') || github.ref_name == 'starr/ci-probe-archive-4x16-20260511-full-ci' }}
     runs-on:
       group: codex-runners
       labels: codex-windows-x64-xl
@@ -856,7 +856,7 @@ jobs:
   windows_x64_archive_test_probe:
     name: Probe — tests from Windows x64 archive shard ${{ matrix.shard }}/4
     needs: windows_x64_test_archive_probe
-    if: ${{ ((github.event_name == 'workflow_dispatch' && github.ref_name == 'starr/ci-probe-xl-archive-shards-20260511' && inputs.windows_x64_archive_fanout == 'true') || github.ref_name == 'starr/ci-probe-xl-archive-shards-20260511-full-ci') && needs.windows_x64_test_archive_probe.result == 'success' }}
+    if: ${{ ((github.event_name == 'workflow_dispatch' && github.ref_name == 'starr/ci-probe-archive-4x16-20260511' && inputs.windows_x64_archive_fanout == 'true') || github.ref_name == 'starr/ci-probe-archive-4x16-20260511-full-ci') && needs.windows_x64_test_archive_probe.result == 'success' }}
     runs-on:
       group: codex-runners
       labels: codex-windows-x64
@@ -916,6 +916,7 @@ jobs:
             --workspace-remap "${workspace_root}" \
             --extract-to "${extract_dir}" \
             --extract-overwrite \
+            --test-threads 16 \
             --partition "hash:${{ matrix.shard }}/4"
         env:
           RUST_BACKTRACE: 1
