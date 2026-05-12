@@ -216,6 +216,45 @@ default_permissions = ":unknown"
 }
 
 #[test]
+fn selected_network_from_tables_resolves_builtin_workspace_parent() {
+    let config: toml::Value = toml::from_str(
+        r#"
+default_permissions = "workspace"
+
+[permissions.workspace]
+extends = ":workspace"
+
+[permissions.workspace.network]
+enabled = true
+
+[permissions.workspace.network.domains]
+"child.example.com" = "allow"
+"#,
+    )
+    .expect("workspace extension config should parse");
+
+    let network = selected_network_from_tables(
+        network_tables_from_toml(&config).expect("workspace extension config should deserialize"),
+    )
+    .expect("workspace extension should resolve")
+    .expect("workspace extension should expose child network config");
+
+    assert_eq!(
+        network,
+        NetworkToml {
+            enabled: Some(true),
+            domains: Some(NetworkDomainPermissionsToml {
+                entries: BTreeMap::from([(
+                    "child.example.com".to_string(),
+                    NetworkDomainPermissionToml::Allow,
+                )]),
+            }),
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
 fn selected_network_from_tables_resolves_permission_profile_inheritance() {
     let config: toml::Value = toml::from_str(
         r#"

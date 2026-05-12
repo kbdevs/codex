@@ -338,7 +338,7 @@ fn permissions_profiles_resolve_extends_parent_first_with_child_overrides() {
     };
 
     let resolved = permissions
-        .resolve_profile("child")
+        .resolve_profile("child", |_| None)
         .expect("child profile should resolve");
 
     assert_eq!(
@@ -416,7 +416,7 @@ fn permissions_profiles_reject_undefined_extends_parent() {
     };
 
     let err = permissions
-        .resolve_profile("child")
+        .resolve_profile("child", |_| None)
         .expect_err("missing parent should be rejected");
 
     assert_eq!(
@@ -447,7 +447,7 @@ fn permissions_profiles_reject_extends_cycles() {
     };
 
     let err = permissions
-        .resolve_profile("alpha")
+        .resolve_profile("alpha", |_| None)
         .expect_err("cycle should be rejected");
 
     assert_eq!(

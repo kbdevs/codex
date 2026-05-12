@@ -22,53 +22,62 @@ impl PermissionsToml {
         self.entries.is_empty()
     }
 
-    pub fn resolve_profile(
+    pub fn resolve_profile<F>(
         &self,
         profile_name: &str,
-    ) -> Result<PermissionProfileToml, PermissionProfileResolutionError> {
-        self.resolve_profile_inner(profile_name, &mut Vec::new(), /*referenced_by*/ None)
-    }
+        mut parent_profile: F,
+    ) -> Result<PermissionProfileToml, PermissionProfileResolutionError>
+    where
+        F: FnMut(&str) -> Option<PermissionProfileToml>,
+    {
+        let mut stack = Vec::new();
+        let mut resolved_profile = None;
+        let mut next_profile_name = profile_name.to_string();
+        let mut referenced_by: Option<String> = None;
 
-    fn resolve_profile_inner(
-        &self,
-        profile_name: &str,
-        stack: &mut Vec<String>,
-        referenced_by: Option<&str>,
-    ) -> Result<PermissionProfileToml, PermissionProfileResolutionError> {
-        if let Some(cycle_start) = stack.iter().position(|name| name == profile_name) {
-            let cycle = stack[cycle_start..]
-                .iter()
+        loop {
+            if let Some(cycle_start) = stack.iter().position(|name| name == &next_profile_name) {
+                let cycle = stack[cycle_start..]
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(next_profile_name))
+                    .collect::<Vec<_>>();
+                return Err(PermissionProfileResolutionError::Cycle { cycle });
+            }
+
+            let profile = self
+                .entries
+                .get(&next_profile_name)
                 .cloned()
-                .chain(std::iter::once(profile_name.to_string()))
-                .collect::<Vec<_>>();
-            return Err(PermissionProfileResolutionError::Cycle { cycle });
+                .or_else(|| parent_profile(&next_profile_name))
+                .ok_or_else(|| {
+                    referenced_by.as_deref().map_or_else(
+                        || PermissionProfileResolutionError::UndefinedProfile {
+                            profile_name: next_profile_name.clone(),
+                        },
+                        |referenced_by| PermissionProfileResolutionError::UndefinedParent {
+                            profile_name: referenced_by.to_string(),
+                            parent_profile_name: next_profile_name.clone(),
+                        },
+                    )
+                })?;
+
+            if let Some(parent_profile_name) = profile.extends.clone() {
+                stack.push(next_profile_name.clone());
+                resolved_profile = Some(match resolved_profile {
+                    Some(child) => merge_permission_profiles(profile, child),
+                    None => profile,
+                });
+                referenced_by = Some(next_profile_name);
+                next_profile_name = parent_profile_name;
+                continue;
+            }
+
+            return Ok(match resolved_profile {
+                Some(child) => merge_permission_profiles(profile, child),
+                None => profile,
+            });
         }
-
-        let profile = self.entries.get(profile_name).cloned().ok_or_else(|| {
-            referenced_by.map_or_else(
-                || PermissionProfileResolutionError::UndefinedProfile {
-                    profile_name: profile_name.to_string(),
-                },
-                |referenced_by| PermissionProfileResolutionError::UndefinedParent {
-                    profile_name: referenced_by.to_string(),
-                    parent_profile_name: profile_name.to_string(),
-                },
-            )
-        })?;
-
-        let Some(parent_profile_name) = profile.extends.as_deref() else {
-            return Ok(profile);
-        };
-
-        stack.push(profile_name.to_string());
-        let parent = self.resolve_profile_inner(
-            parent_profile_name,
-            stack,
-            /*referenced_by*/ Some(profile_name),
-        )?;
-        stack.pop();
-
-        Ok(merge_permission_profiles(parent, profile))
     }
 }
 

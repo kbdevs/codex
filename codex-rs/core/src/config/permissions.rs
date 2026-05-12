@@ -188,8 +188,12 @@ pub(crate) fn resolve_permission_profile(
     profile_name: &str,
 ) -> io::Result<PermissionProfileToml> {
     permissions
-        .resolve_profile(profile_name)
+        .resolve_profile(profile_name, builtin_parent_permission_profile)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))
+}
+
+fn builtin_parent_permission_profile(profile_name: &str) -> Option<PermissionProfileToml> {
+    (profile_name == BUILT_IN_WORKSPACE_PROFILE).then(PermissionProfileToml::default)
 }
 
 pub(crate) fn network_proxy_config_for_profile_selection(
@@ -220,10 +224,47 @@ pub(crate) fn compile_permission_profile(
     startup_warnings: &mut Vec<String>,
 ) -> io::Result<(FileSystemSandboxPolicy, NetworkSandboxPolicy)> {
     let profile = resolve_permission_profile(permissions, profile_name)?;
+    let base_permissions = profile_extends_builtin_workspace(permissions, profile_name)
+        .then(|| PermissionProfile::workspace_write().to_runtime_permissions());
+    compile_resolved_permission_profile(
+        profile,
+        profile_name,
+        policy_cwd,
+        startup_warnings,
+        base_permissions,
+    )
+}
 
-    let mut entries = Vec::new();
+fn profile_extends_builtin_workspace(permissions: &PermissionsToml, profile_name: &str) -> bool {
+    let mut profile_name = profile_name;
+    while let Some(profile) = permissions.entries.get(profile_name) {
+        let Some(parent_profile_name) = profile.extends.as_deref() else {
+            return false;
+        };
+        if parent_profile_name == BUILT_IN_WORKSPACE_PROFILE {
+            return true;
+        }
+        profile_name = parent_profile_name;
+    }
+    false
+}
+
+fn compile_resolved_permission_profile(
+    profile: PermissionProfileToml,
+    profile_name: &str,
+    policy_cwd: &Path,
+    startup_warnings: &mut Vec<String>,
+    base_permissions: Option<(FileSystemSandboxPolicy, NetworkSandboxPolicy)>,
+) -> io::Result<(FileSystemSandboxPolicy, NetworkSandboxPolicy)> {
+    let (mut file_system_sandbox_policy, base_network_sandbox_policy) = base_permissions
+        .unwrap_or_else(|| {
+            (
+                FileSystemSandboxPolicy::restricted(Vec::new()),
+                NetworkSandboxPolicy::Restricted,
+            )
+        });
     if let Some(filesystem) = profile.filesystem.as_ref() {
-        if filesystem.is_empty() {
+        if filesystem.is_empty() && file_system_sandbox_policy.entries.is_empty() {
             push_warning(
                 startup_warnings,
                 missing_filesystem_entries_warning(profile_name),
@@ -248,15 +289,17 @@ pub(crate) fn compile_permission_profile(
                 }
             }
             for (path, permission) in &filesystem.entries {
-                entries.extend(compile_filesystem_permission(
-                    path,
-                    permission,
-                    policy_cwd,
-                    startup_warnings,
-                )?);
+                file_system_sandbox_policy
+                    .entries
+                    .extend(compile_filesystem_permission(
+                        path,
+                        permission,
+                        policy_cwd,
+                        startup_warnings,
+                    )?);
             }
         }
-    } else {
+    } else if file_system_sandbox_policy.entries.is_empty() {
         push_warning(
             startup_warnings,
             missing_filesystem_entries_warning(profile_name),
@@ -268,10 +311,11 @@ pub(crate) fn compile_permission_profile(
             .as_ref()
             .and_then(|filesystem| filesystem.glob_scan_max_depth),
     )?;
-
-    let network_sandbox_policy = compile_network_sandbox_policy(profile.network.as_ref());
-    let mut file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(entries);
-    file_system_sandbox_policy.glob_scan_max_depth = glob_scan_max_depth;
+    if let Some(glob_scan_max_depth) = glob_scan_max_depth {
+        file_system_sandbox_policy.glob_scan_max_depth = Some(glob_scan_max_depth);
+    }
+    let network_sandbox_policy =
+        compile_network_sandbox_policy(profile.network.as_ref(), base_network_sandbox_policy);
     Ok((file_system_sandbox_policy, network_sandbox_policy))
 }
 
@@ -338,14 +382,18 @@ pub(crate) fn get_readable_roots_required_for_codex_runtime(
     readable_roots
 }
 
-fn compile_network_sandbox_policy(network: Option<&NetworkToml>) -> NetworkSandboxPolicy {
+fn compile_network_sandbox_policy(
+    network: Option<&NetworkToml>,
+    base_network_sandbox_policy: NetworkSandboxPolicy,
+) -> NetworkSandboxPolicy {
     let Some(network) = network else {
-        return NetworkSandboxPolicy::Restricted;
+        return base_network_sandbox_policy;
     };
 
     match network.enabled {
         Some(true) => NetworkSandboxPolicy::Enabled,
-        _ => NetworkSandboxPolicy::Restricted,
+        Some(false) => NetworkSandboxPolicy::Restricted,
+        None => base_network_sandbox_policy,
     }
 }
 

@@ -1960,6 +1960,61 @@ async fn explicit_builtin_workspace_profile_ignores_legacy_workspace_write_setti
 }
 
 #[tokio::test]
+async fn default_permissions_profile_can_extend_builtin_workspace() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            default_permissions: Some("workspace-with-network".to_string()),
+            permissions: Some(PermissionsToml {
+                entries: BTreeMap::from([(
+                    "workspace-with-network".to_string(),
+                    PermissionProfileToml {
+                        extends: Some(":workspace".to_string()),
+                        filesystem: None,
+                        network: Some(NetworkToml {
+                            enabled: Some(true),
+                            ..Default::default()
+                        }),
+                    },
+                )]),
+            }),
+            ..Default::default()
+        },
+        ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    let policy = config.permissions.file_system_sandbox_policy();
+    assert!(
+        policy.can_write_path_with_cwd(cwd.path(), cwd.path()),
+        "expected profile extending :workspace to keep project-root writes, policy: {policy:?}"
+    );
+    assert!(
+        !policy.can_write_path_with_cwd(&cwd.path().join(".git"), cwd.path()),
+        "expected profile extending :workspace to keep metadata carveouts, policy: {policy:?}"
+    );
+    assert_eq!(
+        config.permissions.network_sandbox_policy(),
+        NetworkSandboxPolicy::Enabled
+    );
+    assert_eq!(
+        config.permissions.active_permission_profile(),
+        Some(ActivePermissionProfile {
+            id: "workspace-with-network".to_string(),
+            extends: Some(":workspace".to_string()),
+            modifications: Vec::new(),
+        })
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn empty_config_defaults_to_builtin_profile_for_trusted_project() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
