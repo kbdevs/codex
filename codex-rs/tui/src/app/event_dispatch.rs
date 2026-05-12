@@ -1303,13 +1303,9 @@ impl App {
                 self.refresh_status_line();
                 let profile = self.active_profile.as_deref();
                 self.config.service_tier = service_tier.clone();
-                let mut edits = ConfigEditsBuilder::new(&self.config.codex_home)
+                let edits = ConfigEditsBuilder::new(&self.config.codex_home)
                     .with_profile(profile)
                     .set_service_tier(service_tier.clone());
-                if service_tier.is_none() {
-                    self.config.notices.fast_default_opt_out = Some(true);
-                    edits = edits.set_fast_default_opt_out(/*opted_out*/ true);
-                }
                 match edits.apply().await {
                     Ok(()) => {
                         let mut message = if let Some(service_tier) = service_tier {
