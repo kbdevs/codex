@@ -7,6 +7,7 @@ use crate::truncate_function_output_items_with_policy;
 use crate::truncate_text;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::InputAudio;
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -249,6 +250,43 @@ fn formatted_truncate_text_content_items_with_policy_merges_text_and_appends_ima
         ]
     );
     assert_eq!(original_token_count, Some(4));
+}
+
+#[test]
+fn formatted_truncate_text_content_items_with_policy_preserves_audio_like_images() {
+    let items = vec![
+        FunctionCallOutputContentItem::InputText {
+            text: "abcd".to_string(),
+        },
+        FunctionCallOutputContentItem::InputAudio {
+            input_audio: InputAudio {
+                data: "UklGRg==".to_string(),
+                format: "wav".to_string(),
+            },
+        },
+        FunctionCallOutputContentItem::InputText {
+            text: "efgh".to_string(),
+        },
+    ];
+
+    let (output, original_token_count) =
+        formatted_truncate_text_content_items_with_policy(&items, TruncationPolicy::Bytes(4));
+
+    assert_eq!(
+        output,
+        vec![
+            FunctionCallOutputContentItem::InputText {
+                text: "Total output lines: 2\n\nab…5 chars truncated…gh".to_string(),
+            },
+            FunctionCallOutputContentItem::InputAudio {
+                input_audio: InputAudio {
+                    data: "UklGRg==".to_string(),
+                    format: "wav".to_string(),
+                },
+            },
+        ]
+    );
+    assert_eq!(original_token_count, Some(3));
 }
 
 #[test]
