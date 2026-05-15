@@ -171,10 +171,10 @@ fn parse_args() -> Result<BbCodexArgs> {
         print_usage();
         anyhow::bail!("missing target");
     }
-    if values[0] == "bresume" {
+    if values[0] == "bresume" || values[0] == "resume" {
         if values.len() != 1 {
             print_usage();
-            anyhow::bail!("bresume does not accept extra arguments");
+            anyhow::bail!("{} does not accept extra arguments", values[0]);
         }
         return Ok(BbCodexArgs {
             target: TargetMode::Resume,
@@ -197,9 +197,10 @@ fn parse_args() -> Result<BbCodexArgs> {
 }
 
 fn print_usage() {
-    eprintln!("Usage: bb-codex <target-domain-or-url|bresume> [free]");
+    eprintln!("Usage: bb-codex <target-domain-or-url|resume|bresume> [free]");
     eprintln!("Example: bb-codex example.com");
     eprintln!("Example: bb-codex example.com free");
+    eprintln!("Example: bb-codex resume");
     eprintln!("Example: bb-codex bresume");
 }
 
