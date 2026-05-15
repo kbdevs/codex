@@ -680,6 +680,16 @@ jobs:
           echo "CODEX_TEST_REMOTE_ENV=${CODEX_TEST_REMOTE_ENV}" >> "$GITHUB_ENV"
           echo "CODEX_TEST_REMOTE_EXEC_SERVER_URL=${CODEX_TEST_REMOTE_EXEC_SERVER_URL}" >> "$GITHUB_ENV"
 
+      - name: Build Windows sandbox test helpers
+        if: runner.os == 'Windows'
+        run: |
+          cargo build `
+            --target ${{ matrix.target }} `
+            --profile ci-test `
+            -p codex-windows-sandbox `
+            --bin codex-windows-sandbox-setup `
+            --bin codex-command-runner
+
       - name: tests
         id: test
         run: cargo nextest run --no-fail-fast --target ${{ matrix.target }} --cargo-profile ci-test --timings
