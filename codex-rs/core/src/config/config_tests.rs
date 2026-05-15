@@ -9553,7 +9553,7 @@ async fn feature_requirements_normalize_effective_feature_values() -> std::io::R
             Ok(Some(codex_config::ConfigRequirementsToml {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
-                        ("personality".to_string(), true),
+                        ("memories".to_string(), true),
                         ("shell_tool".to_string(), false),
                     ]),
                 }),
@@ -9563,7 +9563,7 @@ async fn feature_requirements_normalize_effective_feature_values() -> std::io::R
         .build()
         .await?;
 
-    assert!(config.features.enabled(Feature::Personality));
+    assert!(config.features.enabled(Feature::MemoryTool));
     assert!(!config.features.enabled(Feature::ShellTool));
     assert!(
         !config
@@ -9703,7 +9703,7 @@ async fn explicit_feature_config_is_normalized_by_requirements() -> std::io::Res
         codex_home.path().join(CONFIG_TOML_FILE),
         r#"
 [features]
-personality = false
+memories = false
 shell_tool = true
 "#,
     )?;
@@ -9715,7 +9715,7 @@ shell_tool = true
             Ok(Some(codex_config::ConfigRequirementsToml {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
-                        ("personality".to_string(), true),
+                        ("memories".to_string(), true),
                         ("shell_tool".to_string(), false),
                     ]),
                 }),
@@ -9725,7 +9725,7 @@ shell_tool = true
         .build()
         .await?;
 
-    assert!(config.features.enabled(Feature::Personality));
+    assert!(config.features.enabled(Feature::MemoryTool));
     assert!(!config.features.enabled(Feature::ShellTool));
     assert!(
         !config
@@ -10431,7 +10431,7 @@ async fn feature_requirements_normalize_runtime_feature_mutations() -> std::io::
             Ok(Some(codex_config::ConfigRequirementsToml {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
-                        ("personality".to_string(), true),
+                        ("memories".to_string(), true),
                         ("shell_tool".to_string(), false),
                     ]),
                 }),
@@ -10443,7 +10443,7 @@ async fn feature_requirements_normalize_runtime_feature_mutations() -> std::io::
 
     let mut requested = config.features.get().clone();
     requested
-        .disable(Feature::Personality)
+        .disable(Feature::MemoryTool)
         .enable(Feature::ShellTool);
     assert!(config.features.can_set(&requested).is_ok());
     config
@@ -10451,7 +10451,7 @@ async fn feature_requirements_normalize_runtime_feature_mutations() -> std::io::
         .set(requested)
         .expect("managed feature mutations should normalize successfully");
 
-    assert!(config.features.enabled(Feature::Personality));
+    assert!(config.features.enabled(Feature::MemoryTool));
     assert!(!config.features.enabled(Feature::ShellTool));
 
     Ok(())

@@ -98,12 +98,7 @@ async fn turn_start_sends_originator_header() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(responses).await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
-    )?;
+    create_config_toml(codex_home.path(), &server.uri(), "never", &BTreeMap::new())?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(
@@ -174,12 +169,7 @@ async fn turn_start_emits_user_message_item_with_text_elements() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(responses).await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
-    )?;
+    create_config_toml(codex_home.path(), &server.uri(), "never", &BTreeMap::new())?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
@@ -261,12 +251,7 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
     let server = create_mock_responses_server_sequence_unchecked(responses).await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
-    )?;
+    create_config_toml(codex_home.path(), &server.uri(), "never", &BTreeMap::new())?;
     write_models_cache(codex_home.path())?;
     let cache_path = codex_home.path().join("models_cache.json");
     let mut cache: serde_json::Value =
@@ -613,12 +598,7 @@ async fn turn_start_accepts_text_at_limit_with_mention_item() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(responses).await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
-    )?;
+    create_config_toml(codex_home.path(), &server.uri(), "never", &BTreeMap::new())?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
@@ -676,7 +656,7 @@ async fn turn_start_rejects_combined_oversized_text_input() -> Result<()> {
         codex_home.path(),
         "http://localhost/unused",
         "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
+        &BTreeMap::new(),
     )?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
@@ -751,7 +731,7 @@ async fn turn_start_rejects_invalid_permission_selection_before_starting_turn() 
         codex_home.path(),
         "http://localhost/unused",
         "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
+        &BTreeMap::new(),
     )?;
     std::fs::write(
         codex_home.path().join("managed_config.toml"),
@@ -888,12 +868,7 @@ async fn turn_start_emits_notifications_and_accepts_model_override() -> Result<(
     let server = create_mock_responses_server_sequence_unchecked(responses).await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
-    )?;
+    create_config_toml(codex_home.path(), &server.uri(), "never", &BTreeMap::new())?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
@@ -1200,12 +1175,7 @@ async fn turn_start_accepts_personality_override_v2() -> Result<()> {
     let response_mock = responses::mount_sse_once(&server, body).await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
-    )?;
+    create_config_toml(codex_home.path(), &server.uri(), "never", &BTreeMap::new())?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
@@ -1281,12 +1251,7 @@ async fn turn_start_change_personality_mid_thread_v2() -> Result<()> {
     let response_mock = responses::mount_sse_sequence(&server, vec![sse1, sse2]).await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
-    )?;
+    create_config_toml(codex_home.path(), &server.uri(), "never", &BTreeMap::new())?;
 
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
@@ -1387,12 +1352,7 @@ async fn turn_start_uses_migrated_pragmatic_personality_without_override_v2() ->
     let response_mock = responses::mount_sse_once(&server, body).await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
-    )?;
+    create_config_toml(codex_home.path(), &server.uri(), "never", &BTreeMap::new())?;
     create_fake_rollout(
         codex_home.path(),
         "2025-01-01T00-00-00",
@@ -3421,12 +3381,7 @@ async fn turn_start_with_elevated_override_does_not_persist_project_trust() -> R
     let server = create_mock_responses_server_sequence_unchecked(responses).await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(
-        codex_home.path(),
-        &server.uri(),
-        "never",
-        &BTreeMap::from([(Feature::Personality, true)]),
-    )?;
+    create_config_toml(codex_home.path(), &server.uri(), "never", &BTreeMap::new())?;
 
     let workspace = TempDir::new()?;
 
