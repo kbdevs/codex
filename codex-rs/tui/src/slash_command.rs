@@ -29,6 +29,7 @@ pub enum SlashCommand {
     Hooks,
     Review,
     Rename,
+    Undo,
     New,
     Resume,
     Fork,
@@ -40,6 +41,7 @@ pub enum SlashCommand {
     Side,
     Copy,
     Raw,
+    Export,
     Diff,
     Mention,
     Status,
@@ -84,12 +86,14 @@ impl SlashCommand {
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Rename => "rename the current thread",
+            SlashCommand::Undo => "roll back the last user message",
             SlashCommand::Resume => "resume a saved chat",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
             SlashCommand::Raw => "toggle raw scrollback mode for copy-friendly terminal selection",
+            SlashCommand::Export => "export the current session to a file",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
@@ -191,6 +195,7 @@ impl SlashCommand {
             | SlashCommand::Memories
             | SlashCommand::Review
             | SlashCommand::Plan
+            | SlashCommand::Undo
             | SlashCommand::Clear
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop
@@ -198,6 +203,7 @@ impl SlashCommand {
             SlashCommand::Diff
             | SlashCommand::Copy
             | SlashCommand::Raw
+            | SlashCommand::Export
             | SlashCommand::Rename
             | SlashCommand::Mention
             | SlashCommand::Skills

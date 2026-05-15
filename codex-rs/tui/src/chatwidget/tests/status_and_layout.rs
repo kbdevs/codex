@@ -418,6 +418,7 @@ async fn configured_pet_load_is_deferred_until_after_construction() {
         app_event_tx: tx,
         workspace_command_runner: None,
         initial_user_message: None,
+        initial_follow_up_messages: Vec::new(),
         enhanced_keys_supported: false,
         has_chatgpt_account: false,
         model_catalog: test_model_catalog(&cfg),

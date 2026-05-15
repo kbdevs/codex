@@ -1585,6 +1585,8 @@ async fn run_ratatui_app(
 
     let Cli {
         prompt,
+        initial_follow_up_prompts,
+        initial_goal_prompt,
         shared,
         no_alt_screen,
         ..
@@ -1636,6 +1638,8 @@ async fn run_ratatui_app(
         active_profile,
         prompt,
         images,
+        initial_follow_up_prompts,
+        initial_goal_prompt,
         session_selection,
         feedback,
         should_show_trust_screen, // Proxy to: is it a first run in this directory?

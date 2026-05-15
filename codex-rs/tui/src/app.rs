@@ -604,6 +604,7 @@ impl App {
             app_event_tx: self.app_event_tx.clone(),
             workspace_command_runner: self.workspace_command_runner.clone(),
             initial_user_message,
+            initial_follow_up_messages: Vec::new(),
             enhanced_keys_supported: self.enhanced_keys_supported,
             has_chatgpt_account: self.chat_widget.has_chatgpt_account(),
             model_catalog: self.model_catalog.clone(),
@@ -634,6 +635,8 @@ impl App {
         active_profile: Option<String>,
         initial_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
+        initial_follow_up_prompts: Vec<String>,
+        initial_goal_prompt: Option<String>,
         session_selection: SessionSelection,
         feedback: codex_feedback::CodexFeedback,
         is_first_run: bool,
@@ -751,6 +754,12 @@ impl App {
         let enhanced_keys_supported = tui.enhanced_keys_supported();
         let wait_for_initial_session_configured =
             Self::should_wait_for_initial_session(&session_selection);
+        let initial_follow_up_messages = initial_follow_up_prompts
+            .into_iter()
+            .filter_map(|prompt| {
+                crate::chatwidget::create_initial_user_message(Some(prompt), Vec::new(), Vec::new())
+            })
+            .collect::<Vec<_>>();
         let should_prompt_for_paused_goal_after_startup_resume =
             Self::should_prompt_for_paused_goal_after_startup_resume(
                 &session_selection,
@@ -776,6 +785,7 @@ impl App {
                         // CLI prompt args are plain strings, so they don't provide element ranges.
                         Vec::new(),
                     ),
+                    initial_follow_up_messages: initial_follow_up_messages.clone(),
                     enhanced_keys_supported,
                     has_chatgpt_account,
                     model_catalog: model_catalog.clone(),
@@ -813,6 +823,7 @@ impl App {
                         // CLI prompt args are plain strings, so they don't provide element ranges.
                         Vec::new(),
                     ),
+                    initial_follow_up_messages: initial_follow_up_messages.clone(),
                     enhanced_keys_supported,
                     has_chatgpt_account,
                     model_catalog: model_catalog.clone(),
@@ -855,6 +866,7 @@ impl App {
                         // CLI prompt args are plain strings, so they don't provide element ranges.
                         Vec::new(),
                     ),
+                    initial_follow_up_messages: initial_follow_up_messages.clone(),
                     enhanced_keys_supported,
                     has_chatgpt_account,
                     model_catalog: model_catalog.clone(),
@@ -947,6 +959,15 @@ See the Codex keymap documentation for supported actions and examples."
             let thread_id = started.session.thread_id;
             app.enqueue_primary_thread_session(started.session, started.turns)
                 .await?;
+            if let Some(objective) = initial_goal_prompt {
+                app.set_thread_goal_objective(
+                    &mut app_server,
+                    thread_id,
+                    objective,
+                    crate::app_event::ThreadGoalSetMode::ConfirmIfExists,
+                )
+                .await;
+            }
             if should_prompt_for_paused_goal_after_startup_resume {
                 app.maybe_prompt_resume_paused_goal_after_resume(&mut app_server, thread_id)
                     .await;

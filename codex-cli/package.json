@@ -3,7 +3,8 @@
   "version": "0.0.0-dev",
   "license": "Apache-2.0",
   "bin": {
-    "codex": "bin/codex.js"
+    "codex": "bin/codex.js",
+    "bb-codex": "bin/bb-codex.js"
   },
   "type": "module",
   "engines": {

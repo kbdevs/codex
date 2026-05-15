@@ -139,6 +139,9 @@ impl<T: HttpTransport> ResponsesClient<T> {
                         HeaderValue::from_static("text/event-stream"),
                     );
                     req.compression = request_compression;
+                    // This bounds the wait for response headers. Once the SSE stream is open,
+                    // `spawn_response_stream` applies the same timeout between events.
+                    req.timeout = Some(self.session.provider().stream_idle_timeout);
                 },
             )
             .await?;

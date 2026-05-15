@@ -598,6 +598,9 @@ pub(crate) enum AppEvent {
         num_turns: u32,
     },
 
+    /// Export the visible transcript to a Markdown file in the current working directory.
+    ExportSession,
+
     StartCommitAnimation,
     StopCommitAnimation,
     CommitTick,

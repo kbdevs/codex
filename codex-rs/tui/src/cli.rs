@@ -37,6 +37,14 @@ pub struct Cli {
     #[clap(skip)]
     pub resume_include_non_interactive: bool,
 
+    /// Internal: user prompts to queue immediately after the startup prompt.
+    #[clap(skip)]
+    pub initial_follow_up_prompts: Vec<String>,
+
+    /// Internal: goal objective to set after the startup thread is created.
+    #[clap(skip)]
+    pub initial_goal_prompt: Option<String>,
+
     // Internal controls set by the top-level `codex fork` subcommand.
     // These are not exposed as user flags on the base `codex` command.
     #[clap(skip)]

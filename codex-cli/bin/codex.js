@@ -75,13 +75,15 @@ if (!platformPackage) {
   throw new Error(`Unsupported target triple: ${targetTriple}`);
 }
 
-const codexBinaryName = process.platform === "win32" ? "codex.exe" : "codex";
+const nativeBinaryName =
+  process.env.CODEX_NATIVE_BINARY_NAME ||
+  (process.platform === "win32" ? "codex.exe" : "codex");
 const localVendorRoot = path.join(__dirname, "..", "vendor");
 const localBinaryPath = path.join(
   localVendorRoot,
   targetTriple,
   "codex",
-  codexBinaryName,
+  nativeBinaryName,
 );
 
 let vendorRoot;
@@ -115,7 +117,7 @@ if (!vendorRoot) {
 }
 
 const archRoot = path.join(vendorRoot, targetTriple);
-const binaryPath = path.join(archRoot, "codex", codexBinaryName);
+const binaryPath = path.join(archRoot, "codex", nativeBinaryName);
 
 // Use an asynchronous spawn instead of spawnSync so that Node is able to
 // respond to signals (e.g. Ctrl-C / SIGINT) while the native binary is

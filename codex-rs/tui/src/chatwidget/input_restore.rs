@@ -10,6 +10,16 @@ impl ChatWidget {
     pub(crate) fn submit_initial_user_message_if_pending(&mut self) {
         if let Some(user_message) = self.initial_user_message.take() {
             self.submit_user_message(user_message);
+            self.queue_initial_follow_up_messages();
+        } else if !self.suppress_initial_user_message_submit {
+            self.queue_initial_follow_up_messages();
+        }
+    }
+
+    pub(super) fn queue_initial_follow_up_messages(&mut self) {
+        let messages = std::mem::take(&mut self.initial_follow_up_messages);
+        for message in messages {
+            self.queue_user_message(message);
         }
     }
 

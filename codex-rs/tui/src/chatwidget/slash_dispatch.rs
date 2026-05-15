@@ -199,6 +199,16 @@ impl ChatWidget {
                     .counter("codex.thread.rename", /*inc*/ 1, &[]);
                 self.show_rename_prompt();
             }
+            SlashCommand::Undo => {
+                if self.thread_id.is_none() {
+                    self.add_info_message(
+                        "No active session to undo yet.".to_string(),
+                        /*hint*/ None,
+                    );
+                } else {
+                    self.submit_op(AppCommand::thread_rollback(/*num_turns*/ 1));
+                }
+            }
             SlashCommand::Model => {
                 self.open_model_popup();
             }
@@ -330,6 +340,9 @@ impl ChatWidget {
             SlashCommand::Raw => {
                 let enabled = self.toggle_raw_output_mode_and_notify();
                 self.emit_raw_output_mode_changed(enabled);
+            }
+            SlashCommand::Export => {
+                self.app_event_tx.send(AppEvent::ExportSession);
             }
             SlashCommand::Diff => {
                 self.add_diff_in_progress();
@@ -937,10 +950,12 @@ impl ChatWidget {
             | SlashCommand::Plugins
             | SlashCommand::Rollout
             | SlashCommand::Copy
+            | SlashCommand::Export
             | SlashCommand::Raw
             | SlashCommand::Vim
             | SlashCommand::Diff
             | SlashCommand::Rename
+            | SlashCommand::Undo
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback
             | SlashCommand::New

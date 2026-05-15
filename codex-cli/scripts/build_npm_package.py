@@ -69,12 +69,24 @@ PACKAGE_EXPANSIONS: dict[str, list[str]] = {
 
 PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
     "codex": [],
-    "codex-linux-x64": ["bwrap", "codex", "rg"],
-    "codex-linux-arm64": ["bwrap", "codex", "rg"],
-    "codex-darwin-x64": ["codex", "rg"],
-    "codex-darwin-arm64": ["codex", "rg"],
-    "codex-win32-x64": ["codex", "rg", "codex-windows-sandbox-setup", "codex-command-runner"],
-    "codex-win32-arm64": ["codex", "rg", "codex-windows-sandbox-setup", "codex-command-runner"],
+    "codex-linux-x64": ["bwrap", "codex", "bb-codex", "rg"],
+    "codex-linux-arm64": ["bwrap", "codex", "bb-codex", "rg"],
+    "codex-darwin-x64": ["codex", "bb-codex", "rg"],
+    "codex-darwin-arm64": ["codex", "bb-codex", "rg"],
+    "codex-win32-x64": [
+        "codex",
+        "bb-codex",
+        "rg",
+        "codex-windows-sandbox-setup",
+        "codex-command-runner",
+    ],
+    "codex-win32-arm64": [
+        "codex",
+        "bb-codex",
+        "rg",
+        "codex-windows-sandbox-setup",
+        "codex-command-runner",
+    ],
     "codex-responses-api-proxy": ["codex-responses-api-proxy"],
     "codex-sdk": [],
 }
@@ -89,6 +101,7 @@ PACKAGE_CHOICES = tuple(PACKAGE_NATIVE_COMPONENTS)
 COMPONENT_DEST_DIR: dict[str, str] = {
     "bwrap": "codex-resources",
     "codex": "codex",
+    "bb-codex": "codex",
     "codex-responses-api-proxy": "codex-responses-api-proxy",
     "codex-windows-sandbox-setup": "codex",
     "codex-command-runner": "codex",
@@ -198,7 +211,8 @@ def main() -> int:
                     f"Staged version {version} for release in {staging_dir_str}\n\n"
                     "Verify the CLI:\n"
                     f"    node {staging_dir_str}/bin/codex.js --version\n"
-                    f"    node {staging_dir_str}/bin/codex.js --help\n\n"
+                    f"    node {staging_dir_str}/bin/codex.js --help\n"
+                    f"    node {staging_dir_str}/bin/bb-codex.js --help\n\n"
                 )
             elif package == "codex-responses-api-proxy":
                 print(
@@ -253,6 +267,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         bin_dir = staging_dir / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(CODEX_CLI_ROOT / "bin" / "codex.js", bin_dir / "codex.js")
+        shutil.copy2(CODEX_CLI_ROOT / "bin" / "bb-codex.js", bin_dir / "bb-codex.js")
         rg_manifest = CODEX_CLI_ROOT / "bin" / "rg"
         if rg_manifest.exists():
             shutil.copy2(rg_manifest, bin_dir / "rg")

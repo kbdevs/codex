@@ -9,6 +9,10 @@ build = "build.rs"
 name = "codex"
 path = "src/main.rs"
 
+[[bin]]
+name = "bb-codex"
+path = "src/bin/bb-codex.rs"
+
 [lib]
 name = "codex_cli"
 path = "src/lib.rs"

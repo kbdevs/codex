@@ -924,6 +924,18 @@ impl ModelClient {
 
 impl Drop for ModelClientSession {
     fn drop(&mut self) {
+        if let Some(mut rx) = self.websocket_session.last_response_rx.take() {
+            match rx.try_recv() {
+                Ok(last_response) => {
+                    let (tx, rx) = oneshot::channel();
+                    let _ = tx.send(last_response);
+                    self.websocket_session.last_response_rx = Some(rx);
+                }
+                Err(TryRecvError::Closed) | Err(TryRecvError::Empty) => {
+                    self.reset_websocket_session();
+                }
+            }
+        }
         let websocket_session = std::mem::take(&mut self.websocket_session);
         self.client
             .store_cached_websocket_session(websocket_session);

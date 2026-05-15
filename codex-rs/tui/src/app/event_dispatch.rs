@@ -8,7 +8,47 @@ use super::*;
 
 const SHUTDOWN_FIRST_EXIT_TIMEOUT: Duration = Duration::from_secs(/*secs*/ 2);
 
+fn transcript_line_to_plain(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
+}
+
 impl App {
+    fn export_session_to_file(&self) -> std::io::Result<AbsolutePathBuf> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut path = self.config.cwd.join(format!("codex-session-{now}.md"));
+        let mut suffix = 1u32;
+        while path.exists() {
+            path = self
+                .config
+                .cwd
+                .join(format!("codex-session-{now}-{suffix}.md"));
+            suffix = suffix.saturating_add(1);
+        }
+
+        let mut output = String::new();
+        for cell in &self.transcript_cells {
+            for line in cell.transcript_lines(u16::MAX) {
+                output.push_str(&transcript_line_to_plain(&line));
+                output.push('\n');
+            }
+        }
+        if let Some(lines) = self.chat_widget.active_cell_transcript_lines(u16::MAX) {
+            for line in lines {
+                output.push_str(&transcript_line_to_plain(&line));
+                output.push('\n');
+            }
+        }
+
+        std::fs::write(&path, output)?;
+        Ok(path)
+    }
+
     pub(super) async fn handle_event(
         &mut self,
         tui: &mut tui::Tui,
@@ -273,6 +313,15 @@ impl App {
                     tui.frame_requester().schedule_frame();
                 }
             }
+            AppEvent::ExportSession => match self.export_session_to_file() {
+                Ok(path) => self.chat_widget.add_info_message(
+                    format!("Session exported to {}", path.display()),
+                    /*hint*/ None,
+                ),
+                Err(err) => self
+                    .chat_widget
+                    .add_error_message(format!("Failed to export session: {err}")),
+            },
             AppEvent::StartCommitAnimation => {
                 if self
                     .commit_anim_running

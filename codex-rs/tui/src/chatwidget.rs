@@ -471,6 +471,7 @@ pub(crate) struct ChatWidgetInit {
     /// construction provides a runner for the active app-server session.
     pub(crate) workspace_command_runner: Option<WorkspaceCommandRunner>,
     pub(crate) initial_user_message: Option<UserMessage>,
+    pub(crate) initial_follow_up_messages: Vec<UserMessage>,
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) has_chatgpt_account: bool,
     pub(crate) model_catalog: Arc<ModelCatalog>,
@@ -529,6 +530,7 @@ pub(crate) struct ChatWidget {
     session_telemetry: SessionTelemetry,
     session_header: SessionHeader,
     initial_user_message: Option<UserMessage>,
+    initial_follow_up_messages: Vec<UserMessage>,
     status_account_display: Option<StatusAccountDisplay>,
     runtime_model_provider_base_url: Option<String>,
     token_info: Option<TokenUsageInfo>,
