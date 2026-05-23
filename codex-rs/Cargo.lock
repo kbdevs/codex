@@ -2180,6 +2180,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-bb-codex-ni"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "codex-arg0",
+ "codex-exec",
+ "codex-protocol",
+ "codex-utils-cli",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "codex-bwrap"
 version = "0.0.0"
 dependencies = [

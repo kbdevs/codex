@@ -72,6 +72,17 @@ fn parses_config_isolation_flags() {
 }
 
 #[test]
+fn goal_flag_is_global() {
+    let cli = Cli::parse_from(["codex-exec", "resume", "--last", "--goal", "finish audit"]);
+
+    assert_eq!(cli.goal.as_deref(), Some("finish audit"));
+    let Some(Command::Resume(args)) = cli.command else {
+        panic!("expected resume command");
+    };
+    assert!(args.last);
+}
+
+#[test]
 fn removed_full_auto_flag_reports_migration_path() {
     let cli = Cli::parse_from(["codex-exec", "--full-auto", "summarize"]);
 

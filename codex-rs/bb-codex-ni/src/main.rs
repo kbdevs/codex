@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -16,13 +15,14 @@ use clap::Parser;
 use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
 use codex_protocol::protocol::MAX_THREAD_GOAL_OBJECTIVE_CHARS;
-use codex_tui::ExitReason;
+use codex_utils_cli::CliConfigOverrides;
 use serde::Deserialize;
 
 const RUN_METADATA_FILE: &str = ".bb-run.env";
 const DEFAULT_PEAK_WEBSITES_API: &str = "https://peaksecurity.us/api/websites";
 const DEFAULT_PEAK_DEDUP_KEYS: &str = "dennis,nickita";
 const DEFAULT_PEAK_ADD_KEY: &str = "karsten";
+const DEFAULT_WRAP_UP_PROMPT: &str = "The hard runtime limit for this non-interactive security test has been reached. Stop all further exploration now. Inspect the current directory, notes, logs, and artifacts that already exist, then write or update report.md in this directory with the best report possible from the work completed so far. Include confirmed findings with evidence, tested areas, dead ends, limitations, and recommended follow-up checks. If no vulnerability was confirmed, state that clearly. Do not continue testing after report.md is written.";
 const DEFAULT_AUTHORIZATION: &str = r#"# Authorization
 
 This document authorizes aggressive security testing for the bug bounty program associated with the mapped target. The bearer is authorized to perform black-box penetration testing against all in-scope surfaces exposed through this local Blackbox manual mapping, including application endpoints, APIs, authentication flows, client-side surfaces, and related attack surface that belongs to the target program.
@@ -30,16 +30,43 @@ This document authorizes aggressive security testing for the bug bounty program 
 Testing must remain limited to assets that are in scope for the target's bug bounty program and must avoid intentionally harming third parties, exfiltrating unrelated data, or persisting unauthorized access beyond what is necessary to demonstrate impact.
 "#;
 
-#[derive(Debug, Clone)]
-struct BbCodexArgs {
-    target: TargetMode,
+#[derive(Debug)]
+enum BbCodexNiCommand {
+    AuthStatus,
+    Run(BbCodexNiRunArgs),
+    WrapUp(BbCodexNiWrapUpArgs),
 }
 
-#[derive(Debug, Clone)]
-enum TargetMode {
-    Start { target_input: String, free: bool },
-    Resume,
-    AuthStatus,
+#[derive(Debug)]
+struct BbCodexNiRunArgs {
+    target_input: String,
+    free: bool,
+    goal: Option<String>,
+    human: bool,
+    exec_args: Vec<String>,
+}
+
+#[derive(Debug)]
+struct BbCodexNiWrapUpArgs {
+    prompt: String,
+    goal: Option<String>,
+    human: bool,
+    exec_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecMode {
+    New,
+    ResumeLast,
+}
+
+#[derive(Parser, Debug)]
+struct ExecTopCli {
+    #[clap(flatten)]
+    config_overrides: CliConfigOverrides,
+
+    #[clap(flatten)]
+    inner: codex_exec::Cli,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,13 +90,6 @@ struct OpencodeAccount {
     rate_limited_until: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
-struct RunMetadata {
-    original_url: String,
-    target_domain: String,
-    last_localhost_url: Option<String>,
-}
-
 struct ProxyGuard {
     child: Child,
 }
@@ -88,15 +108,20 @@ fn main() -> Result<()> {
 }
 
 async fn run(arg0_paths: Arg0DispatchPaths) -> Result<()> {
-    let args = parse_args()?;
+    let command = parse_args()?;
     let home_dir = home_dir()?;
-    match &args.target {
-        TargetMode::AuthStatus => {
+    let args = match command {
+        BbCodexNiCommand::AuthStatus => {
             print_dev_auth_status(&home_dir)?;
             return Ok(());
         }
-        TargetMode::Start { .. } | TargetMode::Resume => {}
-    }
+        BbCodexNiCommand::WrapUp(args) => {
+            run_codex_wrap_up(arg0_paths, args).await?;
+            return Ok(());
+        }
+        BbCodexNiCommand::Run(args) => args,
+    };
+
     let workspace_root =
         env_path("BB_WORKSPACE_ROOT").unwrap_or_else(|| home_dir.join("pentesting"));
     let support_dir =
@@ -108,28 +133,11 @@ async fn run(arg0_paths: Arg0DispatchPaths) -> Result<()> {
     fs::create_dir_all(&support_dir)?;
     ensure_authorization_file(&authorization_file)?;
 
-    let start_dir = std::env::current_dir()?;
-    let (target_input, target_domain, resume_mode, free_mode) = match args.target {
-        TargetMode::Start { target_input, free } => {
-            let target_domain = normalize_domain(&target_input)?;
-            check_peak_security_lists(&target_input, &target_domain)?;
-            maybe_enter_target_subdir(&target_domain)?;
-            (target_input, target_domain, false, free)
-        }
-        TargetMode::Resume => {
-            let resume_dir = find_resume_dir(&start_dir)?;
-            if resume_dir != start_dir {
-                std::env::set_current_dir(&resume_dir)?;
-                println!("bb-codex: entered run workdir {}", resume_dir.display());
-            }
-            let metadata = read_run_metadata(&resume_dir.join(RUN_METADATA_FILE))?;
-            (metadata.original_url, metadata.target_domain, true, false)
-        }
-        TargetMode::AuthStatus => {
-            anyhow::bail!("auth-status command was not handled before launch")
-        }
-    };
-    let default_prompt_file = if free_mode {
+    let target_domain = normalize_domain(&args.target_input)?;
+    check_peak_security_lists(&args.target_input, &target_domain)?;
+    maybe_enter_target_subdir(&target_domain)?;
+
+    let default_prompt_file = if args.free {
         workspace_root.join("free.md")
     } else {
         workspace_root.join("prompt.md")
@@ -137,18 +145,13 @@ async fn run(arg0_paths: Arg0DispatchPaths) -> Result<()> {
     let prompt_file = env_path("BB_PROMPT_FILE").unwrap_or(default_prompt_file);
     ensure_prompt_file(&prompt_file)?;
 
-    let metadata_path = std::env::current_dir()?.join(RUN_METADATA_FILE);
-    let prior_metadata = if resume_mode {
-        Some(read_run_metadata(&metadata_path)?)
-    } else {
-        None
-    };
-    let local_port = select_local_port(prior_metadata.as_ref())?;
+    let local_port = pick_random_port()?;
     let localhost_url = format!("https://localhost:{local_port}/");
     let prompt_url = format!("https://localhost:{local_port}");
+    let metadata_path = std::env::current_dir()?.join(RUN_METADATA_FILE);
     write_run_metadata(
         &metadata_path,
-        &target_input,
+        &args.target_input,
         &target_domain,
         &localhost_url,
         &prompt_url,
@@ -162,118 +165,274 @@ async fn run(arg0_paths: Arg0DispatchPaths) -> Result<()> {
     )
     .context("failed to start Blackbox proxy")?;
 
-    println!("bb-codex: proxy created for {target_domain}");
-    println!("bb-codex: localhost URL: {localhost_url}");
-    println!("bb-codex: run metadata: {}", metadata_path.display());
+    eprintln!("bb-codex-ni: proxy created for {target_domain}");
+    eprintln!("bb-codex-ni: localhost URL: {localhost_url}");
+    eprintln!("bb-codex-ni: run metadata: {}", metadata_path.display());
 
-    let startup_prompt = if resume_mode {
-        None
-    } else {
-        let local_prompt_file = std::env::current_dir()?.join("prompt.md");
-        write_local_prompt(&prompt_file, &local_prompt_file, &prompt_url)?;
-        println!(
-            "bb-codex: local prompt written to {}",
-            local_prompt_file.display()
+    let local_prompt_file = std::env::current_dir()?.join("prompt.md");
+    write_local_prompt(&prompt_file, &local_prompt_file, &prompt_url)?;
+    eprintln!(
+        "bb-codex-ni: local prompt written to {}",
+        local_prompt_file.display()
+    );
+
+    let startup_prompt = startup_prompt(&prompt_url, args.free);
+    let goal = args
+        .goal
+        .as_deref()
+        .map(str::trim)
+        .filter(|goal| !goal.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| thread_goal_objective_for_prompt(&startup_prompt));
+
+    if args.free {
+        eprintln!("bb-codex-ni: free mode enabled; using free prompt file");
+    }
+    eprintln!("bb-codex-ni: prompt loaded from {}", prompt_file.display());
+    if !args.human {
+        eprintln!(
+            "bb-codex-ni: streaming codex exec events as JSONL; pass --human for final-answer output only"
         );
-        Some(startup_prompt(&prompt_url, free_mode))
-    };
-    let tui_cli = build_tui_cli(resume_mode, startup_prompt)?;
-    if free_mode {
-        println!("bb-codex: free mode enabled; using free prompt file");
     }
-    if resume_mode {
-        println!("bb-codex: resuming codex session; skipping startup prompt");
-    } else {
-        println!("bb-codex: prompt loaded from {}", prompt_file.display());
-    }
-    println!("bb-codex: exit codex to stop the proxy");
 
-    let exit_info = codex_tui::run_main(
-        tui_cli,
-        arg0_paths,
-        codex_config::LoaderOverrides::default(),
-        /*explicit_remote_endpoint*/ None,
-    )
-    .await?;
+    run_codex_exec(arg0_paths, args.exec_args, startup_prompt, goal, args.human).await?;
     drop(proxy);
-
-    if let ExitReason::Fatal(message) = exit_info.exit_reason {
-        anyhow::bail!(message);
-    }
     Ok(())
 }
 
-fn parse_args() -> Result<BbCodexArgs> {
-    let mut values = std::env::args().skip(1).collect::<Vec<_>>();
-    if values
-        .iter()
-        .any(|value| value == "-h" || value == "--help")
-    {
+async fn run_codex_wrap_up(arg0_paths: Arg0DispatchPaths, args: BbCodexNiWrapUpArgs) -> Result<()> {
+    let goal = args
+        .goal
+        .as_deref()
+        .map(str::trim)
+        .filter(|goal| !goal.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| "Finalize report.md from the current run artifacts".to_string());
+    eprintln!("bb-codex-ni: resuming latest session to write report.md");
+    run_codex_exec_with_mode(
+        arg0_paths,
+        args.exec_args,
+        args.prompt,
+        goal,
+        args.human,
+        ExecMode::ResumeLast,
+    )
+    .await
+}
+
+async fn run_codex_exec(
+    arg0_paths: Arg0DispatchPaths,
+    exec_args: Vec<String>,
+    prompt: String,
+    goal: String,
+    human: bool,
+) -> Result<()> {
+    run_codex_exec_with_mode(arg0_paths, exec_args, prompt, goal, human, ExecMode::New).await
+}
+
+async fn run_codex_exec_with_mode(
+    arg0_paths: Arg0DispatchPaths,
+    exec_args: Vec<String>,
+    prompt: String,
+    goal: String,
+    human: bool,
+    mode: ExecMode,
+) -> Result<()> {
+    let argv = build_exec_argv_for_mode(exec_args, prompt, human, mode);
+    let top_cli = ExecTopCli::try_parse_from(argv)?;
+    let mut exec_cli = top_cli.inner;
+    exec_cli
+        .config_overrides
+        .prepend_root_overrides(top_cli.config_overrides);
+    exec_cli
+        .config_overrides
+        .raw_overrides
+        .push("model_reasoning_summary=detailed".to_string());
+    exec_cli
+        .config_overrides
+        .raw_overrides
+        .push("model_supports_reasoning_summaries=true".to_string());
+    exec_cli
+        .config_overrides
+        .raw_overrides
+        .push("features.goals=true".to_string());
+    exec_cli.goal = Some(goal);
+
+    codex_exec::run_main(exec_cli, arg0_paths).await
+}
+
+#[cfg(test)]
+fn build_exec_argv(exec_args: Vec<String>, prompt: String, human: bool) -> Vec<String> {
+    build_exec_argv_for_mode(exec_args, prompt, human, ExecMode::New)
+}
+
+#[cfg(test)]
+fn build_resume_exec_argv(exec_args: Vec<String>, prompt: String, human: bool) -> Vec<String> {
+    build_exec_argv_for_mode(exec_args, prompt, human, ExecMode::ResumeLast)
+}
+
+fn build_exec_argv_for_mode(
+    exec_args: Vec<String>,
+    prompt: String,
+    human: bool,
+    mode: ExecMode,
+) -> Vec<String> {
+    let mut argv = vec![
+        "bb-codex-ni".to_string(),
+        "--dangerously-bypass-approvals-and-sandbox".to_string(),
+    ];
+    if !human && !exec_args.iter().any(|arg| arg == "--json") {
+        argv.push("--json".to_string());
+    }
+    argv.extend(exec_args);
+    if mode == ExecMode::ResumeLast {
+        argv.push("resume".to_string());
+        argv.push("--last".to_string());
+    }
+    argv.push(prompt);
+    argv
+}
+
+fn parse_args() -> Result<BbCodexNiCommand> {
+    let mut raw = std::env::args().skip(1).collect::<Vec<_>>();
+    if raw.iter().any(|value| value == "-h" || value == "--help") || raw.is_empty() {
         print_usage();
+        if raw.is_empty() {
+            anyhow::bail!("missing target");
+        }
         std::process::exit(0);
     }
-    if values.is_empty() {
-        print_usage();
-        anyhow::bail!("missing target");
-    }
-    if values[0] == "auth-status" {
-        if values.len() != 1 {
+
+    if raw.first().is_some_and(|value| value == "auth-status") {
+        if raw.len() > 1 {
             print_usage();
             anyhow::bail!("auth-status does not accept extra arguments");
         }
-        return Ok(BbCodexArgs {
-            target: TargetMode::AuthStatus,
-        });
-    }
-    if values[0] == "bresume" || values[0] == "resume" {
-        if values.len() != 1 {
-            print_usage();
-            anyhow::bail!("{} does not accept extra arguments", values[0]);
-        }
-        return Ok(BbCodexArgs {
-            target: TargetMode::Resume,
-        });
+        return Ok(BbCodexNiCommand::AuthStatus);
     }
 
-    if values.len() > 2 {
-        print_usage();
-        anyhow::bail!("too many arguments");
+    if raw.first().is_some_and(|value| value == "wrap-up") {
+        raw.remove(0);
+        return parse_wrap_up_args(raw).map(BbCodexNiCommand::WrapUp);
     }
-    let mut target_input = values.remove(0).trim().to_string();
-    let mut free = values.first().is_some_and(|value| value == "free");
-    if !free {
-        let mut parts = target_input.rsplitn(2, char::is_whitespace);
-        if parts.next() == Some("free")
-            && let Some(rest) = parts.next().map(str::trim_end)
-            && !rest.is_empty()
-        {
-            target_input = rest.to_string();
-            free = true;
+
+    parse_run_args(raw).map(BbCodexNiCommand::Run)
+}
+
+fn split_exec_args(raw: &mut Vec<String>) -> Vec<String> {
+    if let Some(separator) = raw.iter().position(|value| value == "--") {
+        let exec_args = raw.split_off(separator + 1);
+        raw.pop();
+        exec_args
+    } else {
+        Vec::new()
+    }
+}
+
+fn parse_wrap_up_args(mut raw: Vec<String>) -> Result<BbCodexNiWrapUpArgs> {
+    let exec_args = split_exec_args(&mut raw);
+    let mut goal = None;
+    let mut human = false;
+    let mut prompt_parts = Vec::new();
+    let mut index = 0;
+    while index < raw.len() {
+        let value = &raw[index];
+        if value == "--goal" {
+            index += 1;
+            let Some(next) = raw.get(index) else {
+                print_usage();
+                anyhow::bail!("--goal requires a value");
+            };
+            goal = Some(next.clone());
+        } else if let Some(next) = value.strip_prefix("--goal=") {
+            goal = Some(next.to_string());
+        } else if value == "--human" {
+            human = true;
+        } else if value.starts_with('-') {
+            print_usage();
+            anyhow::bail!(
+                "unknown bb-codex-ni wrap-up argument: {value}; put codex exec args after --"
+            );
+        } else {
+            prompt_parts.push(value.trim().to_string());
         }
+        index += 1;
     }
-    if !free && !values.is_empty() {
-        print_usage();
-        anyhow::bail!("unknown argument: {}", values[0]);
+    let prompt = if prompt_parts.is_empty() {
+        DEFAULT_WRAP_UP_PROMPT.to_string()
+    } else {
+        prompt_parts.join(" ")
+    };
+
+    Ok(BbCodexNiWrapUpArgs {
+        prompt,
+        goal,
+        human,
+        exec_args,
+    })
+}
+
+fn parse_run_args(mut raw: Vec<String>) -> Result<BbCodexNiRunArgs> {
+    let exec_args = split_exec_args(&mut raw);
+    let mut target_input = None;
+    let mut free = false;
+    let mut goal = None;
+    let mut human = false;
+    let mut index = 0;
+    while index < raw.len() {
+        let value = &raw[index];
+        if value == "--goal" {
+            index += 1;
+            let Some(next) = raw.get(index) else {
+                print_usage();
+                anyhow::bail!("--goal requires a value");
+            };
+            goal = Some(next.clone());
+        } else if let Some(next) = value.strip_prefix("--goal=") {
+            goal = Some(next.to_string());
+        } else if value == "--human" {
+            human = true;
+        } else if value == "free" {
+            free = true;
+        } else if value.starts_with('-') {
+            print_usage();
+            anyhow::bail!("unknown bb-codex-ni argument: {value}; put codex exec args after --");
+        } else if target_input.is_none() {
+            target_input = Some(value.trim().to_string());
+        } else {
+            print_usage();
+            anyhow::bail!("unexpected argument: {value}");
+        }
+        index += 1;
     }
-    Ok(BbCodexArgs {
-        target: TargetMode::Start { target_input, free },
+
+    Ok(BbCodexNiRunArgs {
+        target_input: target_input.context("missing target")?,
+        free,
+        goal,
+        human,
+        exec_args,
     })
 }
 
 fn print_usage() {
-    eprintln!("Usage: bb-codex <target-domain-or-url|resume|bresume|auth-status> [free]");
-    eprintln!("Usage: bb-codex-dev <target-domain-or-url|resume|bresume|auth-status> [free]");
-    eprintln!("Example: bb-codex example.com");
-    eprintln!("Example: bb-codex example.com free");
-    eprintln!("Example: bb-codex resume");
-    eprintln!("Example: bb-codex bresume");
-    eprintln!("Example: bb-codex auth-status");
+    eprintln!(
+        "Usage: bb-codex-ni <target-domain-or-url|auth-status> [free] [--goal GOAL] [--human] [-- <codex exec options>]"
+    );
+    eprintln!(
+        "       bb-codex-ni wrap-up [--goal GOAL] [--human] [PROMPT] [-- <codex exec options>]"
+    );
+    eprintln!("Example: bb-codex-ni example.com --goal 'Find an auth bypass'");
+    eprintln!("Example: bb-codex-ni example.com free -- -o result.jsonl");
+    eprintln!("Example: bb-codex-ni example.com --human");
+    eprintln!("Example: bb-codex-ni wrap-up");
+    eprintln!("Example: bb-codex-ni auth-status");
 }
 
 fn print_dev_auth_status(home_dir: &Path) -> Result<()> {
     let accounts = load_opencode_accounts(home_dir)?;
     println!(
-        "bb-codex: native multi-account registry accounts={}",
+        "bb-codex-ni: native multi-account registry accounts={}",
         accounts.len()
     );
     for account in accounts {
@@ -320,6 +479,11 @@ fn load_opencode_accounts(home_dir: &Path) -> Result<Vec<OpencodeAccount>> {
 }
 
 fn check_peak_security_lists(target_input: &str, target_domain: &str) -> Result<()> {
+    if std::env::var("BB_SKIP_PEAK_SECURITY").is_ok_and(|value| value == "1" || value == "true") {
+        eprintln!("bb-codex-ni: skipping Peak Security check by environment request");
+        return Ok(());
+    }
+
     let websites_api = std::env::var("BB_PEAK_WEBSITES_API")
         .unwrap_or_else(|_| DEFAULT_PEAK_WEBSITES_API.to_string());
     let dedup_keys =
@@ -328,7 +492,7 @@ fn check_peak_security_lists(target_input: &str, target_domain: &str) -> Result<
         std::env::var("BB_PEAK_ADD_KEY").unwrap_or_else(|_| DEFAULT_PEAK_ADD_KEY.to_string());
 
     let Some(python3) = resolve_bin("BB_PYTHON_BIN", "python3", &["/usr/bin/python3"]) else {
-        eprintln!("bb-codex: warning: python3 not found; skipping Peak Security dedup check");
+        eprintln!("bb-codex-ni: warning: python3 not found; skipping Peak Security dedup check");
         return Ok(());
     };
 
@@ -348,13 +512,15 @@ fn check_peak_security_lists(target_input: &str, target_domain: &str) -> Result<
 
     match status.code() {
         Some(0) => {
-            eprint!("bb-codex: press Enter to run anyway, or Ctrl-C to stop. ");
+            eprint!("bb-codex-ni: press Enter to run anyway, or Ctrl-C to stop. ");
             let mut line = String::new();
             std::io::stdin().read_line(&mut line)?;
         }
         Some(1) => {}
-        Some(code) => eprintln!("bb-codex: warning: Peak Security check exited with status {code}"),
-        None => eprintln!("bb-codex: warning: Peak Security check was interrupted"),
+        Some(code) => {
+            eprintln!("bb-codex-ni: warning: Peak Security check exited with status {code}")
+        }
+        None => eprintln!("bb-codex-ni: warning: Peak Security check was interrupted"),
     }
     Ok(())
 }
@@ -453,7 +619,7 @@ try:
     self_key = add_key.strip()
     check_keys = list(dict.fromkeys(keys + ([self_key] if self_key else [])))
     if not check_keys:
-        print("bb-codex: warning: no Peak Security dedup keys configured", file=sys.stderr)
+        print("bb-codex-ni: warning: no Peak Security dedup keys configured", file=sys.stderr)
         raise SystemExit(1)
 
     domains = sorted(target_hosts)
@@ -473,50 +639,23 @@ try:
                 host = normalize_host(value)
             if host in target_hosts:
                 owner = "you" if self_key and key == self_key else key
-                print(f"bb-codex: skipping {target_domain}; target is already listed for {owner} in Peak Security")
+                print(f"bb-codex-ni: skipping {target_domain}; target is already listed for {owner} in Peak Security")
                 raise SystemExit(0)
 
     if checked_keys and add_key.strip():
         try:
             bulk_add(add_key.strip(), [target_domain])
-            print(f"bb-codex: added {target_domain} to Peak Security for {add_key.strip()}")
+            print(f"bb-codex-ni: added {target_domain} to Peak Security for {add_key.strip()}")
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
-            print(f"bb-codex: warning: could not add {target_domain} to Peak Security for {add_key.strip()}: {exc}", file=sys.stderr)
+            print(f"bb-codex-ni: warning: could not add {target_domain} to Peak Security for {add_key.strip()}: {exc}", file=sys.stderr)
 
     if last_error is not None:
-        print(f"bb-codex: warning: could not check Peak Security dedup lists: {last_error}", file=sys.stderr)
+        print(f"bb-codex-ni: warning: could not check Peak Security dedup lists: {last_error}", file=sys.stderr)
 except SystemExit:
     raise
 
 raise SystemExit(1)
 "#
-}
-
-fn build_tui_cli(resume_mode: bool, prompt: Option<String>) -> Result<codex_tui::Cli> {
-    let mut argv = vec![
-        "bb-codex".to_string(),
-        "--dangerously-bypass-approvals-and-sandbox".to_string(),
-    ];
-    if let Some(prompt) = prompt {
-        argv.push(prompt);
-    }
-    let mut cli = codex_tui::Cli::try_parse_from(argv)?;
-    cli.config_overrides
-        .raw_overrides
-        .push("model_reasoning_summary=detailed".to_string());
-    cli.config_overrides
-        .raw_overrides
-        .push("model_supports_reasoning_summaries=true".to_string());
-    cli.config_overrides
-        .raw_overrides
-        .push("features.goals=true".to_string());
-    if resume_mode {
-        cli.resume_picker = true;
-        cli.resume_include_non_interactive = true;
-    } else {
-        cli.initial_goal_prompt = cli.prompt.as_deref().map(thread_goal_objective_for_prompt);
-    }
-    Ok(cli)
 }
 
 fn thread_goal_objective_for_prompt(prompt: &str) -> String {
@@ -582,8 +721,8 @@ fn start_proxy(
     )
     .context("mitmdump not found. Install mitmproxy first or set BB_MITMDUMP_BIN")?;
     let safe_target = safe_name(target_domain);
-    let proxy_script = support_dir.join(format!("bb-codex-{safe_target}-{local_port}.py"));
-    let proxy_log = support_dir.join(format!("bb-codex-{safe_target}-{local_port}.log"));
+    let proxy_script = support_dir.join(format!("bb-codex-ni-{safe_target}-{local_port}.py"));
+    let proxy_log = support_dir.join(format!("bb-codex-ni-{safe_target}-{local_port}.log"));
     fs::write(&proxy_script, proxy_script_source())?;
 
     let stdout = File::create(&proxy_log)?;
@@ -620,133 +759,62 @@ import re
 from mitmproxy import http
 
 TARGET_DOMAIN = os.environ.get("BLACKBOX_MANUAL_TARGET_DOMAIN", "").strip().lower()
-LOCAL_PORT = int(os.environ.get("BLACKBOX_MANUAL_LOCAL_PORT", "0") or "0")
-AUTHORIZATION_PATH = os.environ.get("BLACKBOX_MANUAL_AUTHORIZATION_PATH", "").strip()
-TEXTUAL_KINDS = ("text/", "javascript", "json", "xml", "svg", "html", "x-www-form-urlencoded")
+LOCAL_PORT = os.environ.get("BLACKBOX_MANUAL_LOCAL_PORT", "")
+AUTHORIZATION_PATH = os.environ.get("BLACKBOX_MANUAL_AUTHORIZATION_PATH", "")
 
 
-def _authorization_response() -> http.Response:
-    try:
-        with open(AUTHORIZATION_PATH, "rb") as f:
-            body = f.read()
-        status = 200
-    except OSError as exc:
-        body = f"Authorization file unavailable: {exc}".encode("utf-8")
-        status = 500
-    return http.Response.make(status, body, {"content-type": "text/markdown; charset=utf-8"})
+def target_origin() -> str:
+    if not TARGET_DOMAIN:
+        return ""
+    return f"https://{TARGET_DOMAIN}"
 
 
-def _rewrite_text(value: str) -> str:
-    if not value or TARGET_DOMAIN not in value.lower():
-        return value
-    escaped = re.escape(TARGET_DOMAIN)
-    out = re.sub(
-        rf"(?i)(https?://)((?:[a-z0-9-]+\.)*){escaped}",
-        lambda m: f"https://{(m.group(2) or '')}localhost:{LOCAL_PORT}",
-        value,
-    )
-    return re.sub(rf"(?i)\b{escaped}\b", f"localhost:{LOCAL_PORT}", out)
-
-
-def _rewrite_cookie_domain(cookie: str) -> str:
-    match = re.search(r"(?i);\s*domain=([^;]*)", cookie)
-    if not match:
-        return cookie
-    domain = match.group(1).strip().lower().lstrip(".")
-    if domain == TARGET_DOMAIN or domain.endswith("." + TARGET_DOMAIN):
-        return re.sub(r"(?i);\s*domain=[^;]*", "", cookie, count=1)
-    return cookie
-
-
-def _should_rewrite_body(flow: http.HTTPFlow) -> bool:
-    if flow.request.headers.get("upgrade", "").lower() == "websocket":
-        return False
-    content_type = flow.response.headers.get("content-type", "").lower()
-    if "event-stream" in content_type:
-        return False
-    return any(kind in content_type for kind in TEXTUAL_KINDS)
+def replacement_origin() -> str:
+    if not LOCAL_PORT:
+        return ""
+    return f"https://localhost:{LOCAL_PORT}"
 
 
 def request(flow: http.HTTPFlow) -> None:
-    if not TARGET_DOMAIN or LOCAL_PORT <= 0:
-        return
-
-    local_host = flow.request.pretty_host.split(":", 1)[0].lower()
-    if local_host != "localhost" and not local_host.endswith(".localhost") and local_host != "127.0.0.1":
-        return
-
-    if flow.request.path.split("?", 1)[0] == "/authorization.md":
-        flow.response = _authorization_response()
-        return
-
-    target = TARGET_DOMAIN
-    if local_host.endswith(".localhost"):
-        target = f"{local_host[:-len('.localhost')]}.{TARGET_DOMAIN}"
-
-    flow.metadata["bb_manual"] = True
-    flow.request.scheme = "https"
-    flow.request.host = target
-    flow.request.port = 443
-    flow.request.headers["host"] = target
+    if flow.request.pretty_host == "localhost" and flow.request.port == int(LOCAL_PORT or 0):
+        if flow.request.path.startswith("/authorization.md") and AUTHORIZATION_PATH:
+            return
+        flow.request.scheme = "https"
+        flow.request.host = TARGET_DOMAIN
+        flow.request.port = 443
 
 
 def response(flow: http.HTTPFlow) -> None:
-    if flow.response is None or not flow.metadata.get("bb_manual"):
+    if flow.request.pretty_host == "localhost" and flow.request.path.startswith("/authorization.md") and AUTHORIZATION_PATH:
+        try:
+            with open(AUTHORIZATION_PATH, "rb") as handle:
+                content = handle.read()
+        except OSError as exc:
+            flow.response = http.Response.make(500, f"authorization unavailable: {exc}".encode(), {"content-type": "text/plain"})
+            return
+        flow.response = http.Response.make(200, content, {"content-type": "text/markdown; charset=utf-8"})
         return
 
-    for header in (
-        "location",
-        "content-location",
-        "refresh",
-        "link",
-        "access-control-allow-origin",
-        "content-security-policy",
-        "content-security-policy-report-only",
-        "report-to",
-        "nel",
-    ):
-        value = flow.response.headers.get(header)
-        if value:
-            flow.response.headers[header] = _rewrite_text(value)
-
-    cookies = flow.response.headers.get_all("set-cookie")
-    if cookies:
-        flow.response.headers.set_all("set-cookie", [_rewrite_cookie_domain(_rewrite_text(cookie)) for cookie in cookies])
-
-    if _should_rewrite_body(flow):
-        body = flow.response.get_text(strict=False)
-        if body and TARGET_DOMAIN in body.lower():
-            rewritten = _rewrite_text(body)
-            if rewritten != body:
-                flow.response.set_text(rewritten)
+    origin = target_origin()
+    replacement = replacement_origin()
+    if not origin or not replacement or flow.response is None:
+        return
+    content_type = flow.response.headers.get("content-type", "")
+    if not re.search(r"text|json|javascript|xml", content_type, re.I):
+        return
+    try:
+        text = flow.response.get_text(strict=False)
+    except Exception:
+        return
+    rewritten = text.replace(origin, replacement).replace(origin.replace("https://", "http://"), replacement)
+    if rewritten != text:
+        flow.response.set_text(rewritten)
 "#
-}
-
-fn select_local_port(metadata: Option<&RunMetadata>) -> Result<u16> {
-    if let Some(port) = metadata
-        .and_then(|metadata| metadata.last_localhost_url.as_deref())
-        .and_then(localhost_port)
-        && port_is_available(port)
-    {
-        return Ok(port);
-    }
-    pick_random_port()
-}
-
-fn localhost_port(value: &str) -> Option<u16> {
-    let after_scheme = value.split_once("://").map_or(value, |(_, rest)| rest);
-    let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
-    let port = host_port.rsplit_once(':')?.1;
-    port.parse().ok()
 }
 
 fn pick_random_port() -> Result<u16> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     Ok(listener.local_addr()?.port())
-}
-
-fn port_is_available(port: u16) -> bool {
-    TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
 fn normalize_domain(input: &str) -> Result<String> {
@@ -793,73 +861,11 @@ fn maybe_enter_target_subdir(target_domain: &str) -> Result<()> {
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or(".");
-    println!(
-        "bb-codex: entered workdir {base}/{}",
+    eprintln!(
+        "bb-codex-ni: entered workdir {base}/{}",
         candidate.file_name().unwrap_or_default().to_string_lossy()
     );
     Ok(())
-}
-
-fn find_resume_dir(start_dir: &Path) -> Result<PathBuf> {
-    let direct = start_dir.join(RUN_METADATA_FILE);
-    if direct.is_file() {
-        return Ok(start_dir.to_path_buf());
-    }
-    let mut matches = Vec::new();
-    for entry in fs::read_dir(start_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() && path.join(RUN_METADATA_FILE).is_file() {
-            matches.push(path);
-        }
-    }
-    match matches.len() {
-        1 => Ok(matches.remove(0)),
-        0 => anyhow::bail!(
-            "cannot bresume; missing {RUN_METADATA_FILE} in {} or one-level subdirectories",
-            start_dir.display()
-        ),
-        _ => anyhow::bail!(
-            "cannot bresume; multiple subdirectories contain {RUN_METADATA_FILE}; cd into the intended run directory first"
-        ),
-    }
-}
-
-fn read_run_metadata(path: &Path) -> Result<RunMetadata> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("failed to read run metadata from {}", path.display()))?;
-    let values = parse_env_file(&content);
-    let original_url = values
-        .get("BB_ORIGINAL_URL")
-        .cloned()
-        .context("run metadata is missing BB_ORIGINAL_URL")?;
-    let target_domain = values
-        .get("BB_TARGET_DOMAIN")
-        .cloned()
-        .context("run metadata is missing BB_TARGET_DOMAIN")?;
-    let last_localhost_url = values.get("BB_LAST_LOCALHOST_URL").cloned();
-    Ok(RunMetadata {
-        original_url,
-        target_domain,
-        last_localhost_url,
-    })
-}
-
-fn parse_env_file(content: &str) -> HashMap<String, String> {
-    content
-        .lines()
-        .filter_map(|line| {
-            let (key, value) = line.split_once('=')?;
-            Some((key.trim().to_string(), unquote_shell_value(value.trim())))
-        })
-        .collect()
-}
-
-fn unquote_shell_value(value: &str) -> String {
-    if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
-        return value[1..value.len() - 1].replace("'\\''", "'");
-    }
-    value.replace("\\ ", " ")
 }
 
 fn write_run_metadata(
@@ -870,7 +876,7 @@ fn write_run_metadata(
     prompt_url: &str,
 ) -> Result<()> {
     let content = format!(
-        "BB_ORIGINAL_URL={}\nBB_TARGET_DOMAIN={}\nBB_LAST_LOCALHOST_URL={}\nBB_LAST_PROMPT_URL={}\nBB_UPDATED_AT={}\n",
+        "BB_ORIGINAL_URL={}\nBB_TARGET_DOMAIN={}\nBB_LAST_LOCALHOST_URL={}\nBB_LAST_PROMPT_URL={}\nBB_NON_INTERACTIVE=1\nBB_UPDATED_AT={}\n",
         shell_quote(target_input),
         shell_quote(target_domain),
         shell_quote(localhost_url),
@@ -964,5 +970,68 @@ fn safe_name(value: &str) -> String {
         "target".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn exec_argv_defaults_to_json_events() {
+        let argv = build_exec_argv(Vec::new(), "prompt".to_string(), false);
+        assert_eq!(
+            argv,
+            vec![
+                "bb-codex-ni",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--json",
+                "prompt",
+            ]
+        );
+    }
+
+    #[test]
+    fn exec_argv_human_mode_preserves_human_output() {
+        let argv = build_exec_argv(Vec::new(), "prompt".to_string(), true);
+        assert_eq!(
+            argv,
+            vec![
+                "bb-codex-ni",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "prompt",
+            ]
+        );
+    }
+
+    #[test]
+    fn exec_argv_does_not_duplicate_json_flag() {
+        let argv = build_exec_argv(vec!["--json".to_string()], "prompt".to_string(), false);
+        assert_eq!(
+            argv,
+            vec![
+                "bb-codex-ni",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--json",
+                "prompt",
+            ]
+        );
+    }
+
+    #[test]
+    fn resume_exec_argv_uses_last_thread() {
+        let argv = build_resume_exec_argv(Vec::new(), "wrap it up".to_string(), false);
+        assert_eq!(
+            argv,
+            vec![
+                "bb-codex-ni",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--json",
+                "resume",
+                "--last",
+                "wrap it up",
+            ]
+        );
     }
 }

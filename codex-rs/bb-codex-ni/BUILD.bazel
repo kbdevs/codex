@@ -1,0 +1,6 @@
+load("//:defs.bzl", "codex_rust_crate")
+
+codex_rust_crate(
+    name = "bb-codex-ni",
+    crate_name = "codex_bb_codex_ni",
+)

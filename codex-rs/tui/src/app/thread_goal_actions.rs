@@ -25,8 +25,14 @@ impl App {
         let response = match result {
             Ok(response) => response,
             Err(err) => {
-                self.chat_widget
-                    .add_error_message(format!("Failed to read thread goal: {err}"));
+                tracing::warn!("failed to read thread goal for goal menu: {err}");
+                self.chat_widget.add_info_message(
+                    "Usage: /goal <objective>".to_string(),
+                    Some(
+                        "Goal status could not be read. Set a new goal with /goal <objective>."
+                            .to_string(),
+                    ),
+                );
                 return;
             }
         };
@@ -121,9 +127,9 @@ impl App {
                 }
                 Ok(_) => {}
                 Err(err) => {
-                    self.chat_widget
-                        .add_error_message(format!("Failed to read thread goal: {err}"));
-                    return;
+                    tracing::warn!(
+                        "failed to read existing thread goal before setting a new goal; continuing with set: {err}"
+                    );
                 }
             }
         }

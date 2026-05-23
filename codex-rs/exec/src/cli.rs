@@ -69,6 +69,10 @@ pub struct Cli {
     )]
     pub json: bool,
 
+    /// Set an active thread goal before the first non-interactive turn.
+    #[arg(long = "goal", value_name = "GOAL", global = true)]
+    pub goal: Option<String>,
+
     /// Specifies file where the last message from the agent should be written.
     #[arg(
         long = "output-last-message",

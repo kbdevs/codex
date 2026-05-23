@@ -1,0 +1,15 @@
+FROM rust:1.93-bookworm AS build
+
+WORKDIR /work
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+COPY . /work
+RUN cargo build -p codex-bb-codex-ni
+
+FROM daytonaio/sandbox:0.6.0
+USER root
+COPY --from=build /work/target/debug/bb-codex-ni /home/daytona/bb-codex-ni
+RUN chmod +x /home/daytona/bb-codex-ni && chown daytona:daytona /home/daytona/bb-codex-ni
+USER daytona
+WORKDIR /home/daytona

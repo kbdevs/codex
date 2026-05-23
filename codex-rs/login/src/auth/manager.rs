@@ -24,6 +24,7 @@ use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::ModelProviderAuthInfo;
 
 use super::external_bearer::BearerTokenRefresher;
+use super::multi_account::MultiAccountStore;
 use super::revoke::revoke_auth_tokens;
 pub use crate::auth::agent_identity::AgentIdentityAuth;
 pub use crate::auth::storage::AgentIdentityAuthRecord;
@@ -196,7 +197,7 @@ impl From<RefreshTokenError> for std::io::Error {
 }
 
 impl CodexAuth {
-    async fn from_auth_dot_json(
+    pub(crate) async fn from_auth_dot_json(
         codex_home: &Path,
         auth_dot_json: AuthDotJson,
         auth_credentials_store_mode: AuthCredentialsStoreMode,
@@ -812,7 +813,7 @@ fn persist_tokens(
 
 // Requests refreshed ChatGPT OAuth tokens from the auth service using a refresh token.
 // The caller is responsible for persisting any returned tokens.
-async fn request_chatgpt_token_refresh(
+pub(crate) async fn request_chatgpt_token_refresh(
     refresh_token: String,
     client: &CodexHttpClient,
 ) -> Result<RefreshResponse, RefreshTokenError> {
@@ -918,10 +919,10 @@ struct RefreshRequest {
 }
 
 #[derive(Deserialize, Clone)]
-struct RefreshResponse {
-    id_token: Option<String>,
-    access_token: Option<String>,
-    refresh_token: Option<String>,
+pub(crate) struct RefreshResponse {
+    pub(crate) id_token: Option<String>,
+    pub(crate) access_token: Option<String>,
+    pub(crate) refresh_token: Option<String>,
 }
 
 // Shared constant for token refresh (client id used for oauth token refresh flow)
@@ -1421,6 +1422,50 @@ impl AuthManager {
             return Some(auth);
         }
         self.auth_cached()
+    }
+
+    pub fn multi_account_available(&self) -> bool {
+        MultiAccountStore::new(&self.codex_home).is_available()
+    }
+
+    pub async fn multi_account_auth_for_model(
+        &self,
+        model_id: &str,
+        excluded_account_ids: &[String],
+    ) -> std::io::Result<Option<super::multi_account::MultiAccountAuth>> {
+        if self.has_external_api_key_auth()
+            || self
+                .auth_cached()
+                .is_some_and(|auth| auth.is_api_key_auth())
+        {
+            return Ok(None);
+        }
+
+        MultiAccountStore::new(&self.codex_home)
+            .select_auth_for_model(
+                model_id,
+                excluded_account_ids,
+                self.auth_credentials_store_mode,
+                self.chatgpt_base_url.as_deref(),
+            )
+            .await
+    }
+
+    pub fn mark_multi_account_rate_limited(
+        &self,
+        account_id: &str,
+        message: Option<&str>,
+        retry_after: Option<std::time::Duration>,
+    ) -> std::io::Result<()> {
+        MultiAccountStore::new(&self.codex_home).mark_rate_limited(account_id, message, retry_after)
+    }
+
+    pub fn mark_multi_account_auth_invalid(
+        &self,
+        account_id: &str,
+        message: Option<&str>,
+    ) -> std::io::Result<()> {
+        MultiAccountStore::new(&self.codex_home).mark_auth_invalid(account_id, message)
     }
 
     /// Force a reload of the auth information from auth.json. Returns

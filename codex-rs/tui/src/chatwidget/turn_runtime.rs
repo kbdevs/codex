@@ -75,6 +75,7 @@ impl ChatWidget {
             crate::pets::PetNotificationKind::Running,
             /*body*/ None,
         );
+        self.submit_initial_follow_up_messages_if_turn_started();
         self.request_redraw();
     }
 

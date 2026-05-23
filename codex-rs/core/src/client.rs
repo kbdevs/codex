@@ -188,6 +188,23 @@ struct CurrentClientSetup {
     auth: Option<CodexAuth>,
     api_provider: ApiProvider,
     api_auth: SharedAuthProvider,
+    multi_account_id: Option<String>,
+}
+
+#[derive(Clone)]
+struct MultiAccountAttempt {
+    auth_manager: Arc<AuthManager>,
+    account_id: String,
+}
+
+enum MultiAccountFailure {
+    AuthInvalid {
+        message: String,
+    },
+    RateLimited {
+        message: String,
+        retry_after: Option<Duration>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -774,6 +791,14 @@ impl ModelClient {
         {
             return false;
         }
+        if self
+            .state
+            .provider
+            .auth_manager()
+            .is_some_and(|auth_manager| auth_manager.multi_account_available())
+        {
+            return false;
+        }
 
         true
     }
@@ -783,6 +808,37 @@ impl ModelClient {
     /// This centralizes setup used by both prewarm and normal request paths so they stay in
     /// lockstep when auth/provider resolution changes.
     async fn current_client_setup(&self) -> Result<CurrentClientSetup> {
+        self.current_client_setup_for_model(/*model_id*/ None, &[])
+            .await
+    }
+
+    async fn current_client_setup_for_model(
+        &self,
+        model_id: Option<&str>,
+        excluded_account_ids: &[String],
+    ) -> Result<CurrentClientSetup> {
+        if let Some(model_id) = model_id
+            && self.state.provider.info().is_openai()
+            && let Some(auth_manager) = self.state.provider.auth_manager()
+            && auth_manager.multi_account_available()
+            && let Some(multi_auth) = auth_manager
+                .multi_account_auth_for_model(model_id, excluded_account_ids)
+                .await?
+        {
+            let api_provider = self
+                .state
+                .provider
+                .info()
+                .to_api_provider(Some(multi_auth.auth.auth_mode()))?;
+            let api_auth = codex_model_provider::auth_provider_from_auth(&multi_auth.auth);
+            return Ok(CurrentClientSetup {
+                auth: Some(multi_auth.auth),
+                api_provider,
+                api_auth,
+                multi_account_id: Some(multi_auth.account_id),
+            });
+        }
+
         let auth = self.state.provider.auth().await;
         let api_provider = self.state.provider.api_provider().await?;
         let api_auth = self.state.provider.api_auth().await?;
@@ -790,7 +846,19 @@ impl ModelClient {
             auth,
             api_provider,
             api_auth,
+            multi_account_id: None,
         })
+    }
+
+    fn multi_account_attempt(&self, setup: &CurrentClientSetup) -> Option<MultiAccountAttempt> {
+        Some(MultiAccountAttempt {
+            auth_manager: self.state.provider.auth_manager()?,
+            account_id: setup.multi_account_id.clone()?,
+        })
+    }
+
+    fn mark_multi_account_failure(&self, attempt: &MultiAccountAttempt, err: &ApiError) -> bool {
+        mark_multi_account_attempt_failure(attempt, err)
     }
 
     /// Opens a websocket connection using the same header and telemetry wiring as normal turns.
@@ -1235,8 +1303,12 @@ impl ModelClientSession {
             .as_ref()
             .map(AuthManager::unauthorized_recovery);
         let mut pending_retry = PendingUnauthorizedRetry::default();
+        let mut excluded_multi_account_ids = Vec::new();
         loop {
-            let client_setup = self.client.current_client_setup().await?;
+            let client_setup = self
+                .client
+                .current_client_setup_for_model(Some(&model_info.slug), &excluded_multi_account_ids)
+                .await?;
             let transport = ReqwestTransport::new(build_reqwest_client());
             let request_auth_context = AuthRequestTelemetryContext::new(
                 client_setup.auth.as_ref().map(CodexAuth::auth_mode),
@@ -1265,6 +1337,7 @@ impl ModelClientSession {
             let inference_trace_attempt = inference_trace.start_attempt();
             inference_trace_attempt.add_request_headers(&mut options.extra_headers);
             inference_trace_attempt.record_started(&request);
+            let multi_account_attempt = self.client.multi_account_attempt(&client_setup);
             let client = ApiResponsesClient::new(
                 transport,
                 client_setup.api_provider,
@@ -1279,12 +1352,15 @@ impl ModelClientSession {
                         stream,
                         session_telemetry.clone(),
                         inference_trace_attempt,
+                        multi_account_attempt,
                     );
                     return Ok(stream);
                 }
                 Err(ApiError::Transport(
                     unauthorized_transport @ TransportError::Http { status, .. },
-                )) if status == StatusCode::UNAUTHORIZED => {
+                )) if status == StatusCode::UNAUTHORIZED
+                    && client_setup.multi_account_id.is_none() =>
+                {
                     let response_debug_context =
                         extract_response_debug_context(&unauthorized_transport);
                     inference_trace_attempt.record_failed(
@@ -1303,6 +1379,12 @@ impl ModelClientSession {
                     continue;
                 }
                 Err(err) => {
+                    if let Some(attempt) = multi_account_attempt.as_ref()
+                        && self.client.mark_multi_account_failure(attempt, &err)
+                    {
+                        excluded_multi_account_ids.push(attempt.account_id.clone());
+                        continue;
+                    }
                     let response_debug_context =
                         extract_response_debug_context_from_api_error(&err);
                     let err = map_api_error(err);
@@ -1381,6 +1463,7 @@ impl ModelClientSession {
             if warmup {
                 ws_payload.generate = Some(false);
             }
+            let multi_account_attempt = self.client.multi_account_attempt(&client_setup);
 
             match self
                 .websocket_connection(WebsocketConnectParams {
@@ -1453,6 +1536,7 @@ impl ModelClientSession {
                 stream_result,
                 session_telemetry.clone(),
                 inference_trace_attempt,
+                multi_account_attempt,
             );
             self.websocket_session.last_response_rx = Some(last_request_rx);
             return Ok(WebsocketStreamOutcome::Stream(stream));
@@ -1728,6 +1812,7 @@ fn map_response_stream(
     api_stream: codex_api::ResponseStream,
     session_telemetry: SessionTelemetry,
     inference_trace_attempt: InferenceTraceAttempt,
+    multi_account_attempt: Option<MultiAccountAttempt>,
 ) -> (ResponseStream, oneshot::Receiver<LastResponse>) {
     let codex_api::ResponseStream {
         rx_event,
@@ -1742,6 +1827,7 @@ fn map_response_stream(
         api_stream,
         session_telemetry,
         inference_trace_attempt,
+        multi_account_attempt,
     )
 }
 
@@ -1750,6 +1836,7 @@ fn map_response_events<S>(
     api_stream: S,
     session_telemetry: SessionTelemetry,
     inference_trace_attempt: InferenceTraceAttempt,
+    multi_account_attempt: Option<MultiAccountAttempt>,
 ) -> (ResponseStream, oneshot::Receiver<LastResponse>)
 where
     S: futures::Stream<Item = std::result::Result<ResponseEvent, ApiError>>
@@ -1860,7 +1947,18 @@ where
                     if let Some(upstream_request_id) = upstream_request_id {
                         feedback_tags!(last_model_request_id = upstream_request_id);
                     }
-                    let mapped = map_api_error(err);
+                    let retry_with_next_account = multi_account_attempt
+                        .as_ref()
+                        .is_some_and(|attempt| mark_multi_account_stream_failure(attempt, &err));
+                    let mapped = if retry_with_next_account {
+                        CodexErr::Stream(
+                            "Codex account failed; retrying with another configured account"
+                                .to_string(),
+                            None,
+                        )
+                    } else {
+                        map_api_error(err)
+                    };
                     inference_trace_attempt.record_failed(
                         &mapped,
                         upstream_request_id,
@@ -1960,6 +2058,90 @@ struct WebsocketConnectParams<'a> {
     options: &'a ApiResponsesOptions,
     auth_context: AuthRequestTelemetryContext,
     request_route_telemetry: RequestRouteTelemetry,
+}
+
+fn mark_multi_account_stream_failure(attempt: &MultiAccountAttempt, err: &ApiError) -> bool {
+    mark_multi_account_attempt_failure(attempt, err)
+}
+
+fn mark_multi_account_attempt_failure(attempt: &MultiAccountAttempt, err: &ApiError) -> bool {
+    let Some(failure) = multi_account_failure(err) else {
+        return false;
+    };
+    match failure {
+        MultiAccountFailure::AuthInvalid { message } => {
+            if let Err(err) = attempt
+                .auth_manager
+                .mark_multi_account_auth_invalid(&attempt.account_id, Some(&message))
+            {
+                warn!("failed to mark Codex account auth-invalid: {err}");
+            }
+        }
+        MultiAccountFailure::RateLimited {
+            message,
+            retry_after,
+        } => {
+            if let Err(err) = attempt.auth_manager.mark_multi_account_rate_limited(
+                &attempt.account_id,
+                Some(&message),
+                retry_after,
+            ) {
+                warn!("failed to mark Codex account rate-limited: {err}");
+            }
+        }
+    }
+    true
+}
+
+fn multi_account_failure(err: &ApiError) -> Option<MultiAccountFailure> {
+    match err {
+        ApiError::Transport(TransportError::Http { status, body, .. })
+            if *status == StatusCode::UNAUTHORIZED || *status == StatusCode::FORBIDDEN =>
+        {
+            Some(MultiAccountFailure::AuthInvalid {
+                message: body.clone().unwrap_or_else(|| status.to_string()),
+            })
+        }
+        ApiError::Transport(TransportError::Http { status, body, .. })
+            if *status == StatusCode::TOO_MANY_REQUESTS =>
+        {
+            Some(MultiAccountFailure::RateLimited {
+                message: body.clone().unwrap_or_else(|| "rate limited".to_string()),
+                retry_after: None,
+            })
+        }
+        ApiError::QuotaExceeded | ApiError::UsageNotIncluded => {
+            Some(MultiAccountFailure::RateLimited {
+                message: err.to_string(),
+                retry_after: None,
+            })
+        }
+        ApiError::RateLimit(message) => Some(MultiAccountFailure::RateLimited {
+            message: message.clone(),
+            retry_after: None,
+        }),
+        ApiError::Retryable { message, delay } if is_limit_message(message) => {
+            Some(MultiAccountFailure::RateLimited {
+                message: message.clone(),
+                retry_after: *delay,
+            })
+        }
+        ApiError::Stream(message) if is_limit_message(message) => {
+            Some(MultiAccountFailure::RateLimited {
+                message: message.clone(),
+                retry_after: None,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn is_limit_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("usage limit")
+        || message.contains("rate limit")
+        || message.contains("rate_limit")
+        || message.contains("quota")
 }
 
 async fn handle_unauthorized(

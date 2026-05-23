@@ -32,6 +32,9 @@ use codex_app_server_protocol::ReviewTarget as ApiReviewTarget;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::Thread as AppServerThread;
+use codex_app_server_protocol::ThreadGoalSetParams;
+use codex_app_server_protocol::ThreadGoalSetResponse;
+use codex_app_server_protocol::ThreadGoalStatus;
 use codex_app_server_protocol::ThreadItem as AppServerThreadItem;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
@@ -204,6 +207,7 @@ struct ExecRunArgs {
     exec_span: tracing::Span,
     images: Vec<PathBuf>,
     json_mode: bool,
+    goal: Option<String>,
     last_message_file: Option<PathBuf>,
     model_provider: Option<String>,
     oss: bool,
@@ -252,6 +256,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         color,
         last_message_file,
         json: json_mode,
+        goal,
         prompt,
         output_schema: output_schema_path,
         config_overrides,
@@ -555,6 +560,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         exec_span: exec_span.clone(),
         images,
         json_mode,
+        goal,
         last_message_file,
         model_provider,
         oss,
@@ -577,6 +583,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         exec_span,
         images,
         json_mode,
+        goal,
         last_message_file,
         model_provider,
         oss,
@@ -753,6 +760,28 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     let session_configured = fallback_session_configured;
 
     exec_span.record("thread.id", primary_thread_id_for_span.as_str());
+
+    if let Some(goal) = goal
+        .as_deref()
+        .map(str::trim)
+        .filter(|goal| !goal.is_empty())
+    {
+        let _: ThreadGoalSetResponse = send_request_with_response(
+            &client,
+            ClientRequest::ThreadGoalSet {
+                request_id: request_ids.next(),
+                params: ThreadGoalSetParams {
+                    thread_id: primary_thread_id_for_span.clone(),
+                    objective: Some(goal.to_string()),
+                    status: Some(ThreadGoalStatus::Active),
+                    token_budget: None,
+                },
+            },
+            "thread/goal/set",
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+    }
 
     // Print the effective configuration and initial request so users can see what Codex
     // is using.

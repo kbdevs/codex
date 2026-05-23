@@ -130,6 +130,13 @@ impl StateRuntime {
                 return Err(err);
             }
         };
+        if let Err(err) = ensure_runtime_schema_in_pool(pool.as_ref()).await {
+            warn!(
+                "failed to verify state db runtime schema at {}: {err}",
+                state_path.display()
+            );
+            return Err(err);
+        }
         let logs_pool = match open_logs_sqlite(&logs_path, &logs_migrator, telemetry_override).await
         {
             Ok(db) => Arc::new(db),
@@ -264,6 +271,27 @@ async fn open_sqlite(
     );
     migrate_result?;
     Ok(pool)
+}
+
+async fn ensure_runtime_schema_in_pool(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+CREATE TABLE IF NOT EXISTS thread_goals (
+    thread_id TEXT PRIMARY KEY NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    goal_id TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'budget_limited', 'complete')),
+    token_budget INTEGER,
+    tokens_used INTEGER NOT NULL DEFAULT 0,
+    time_used_seconds INTEGER NOT NULL DEFAULT 0,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub(super) async fn ensure_backfill_state_row_in_pool(
@@ -476,6 +504,46 @@ mod tests {
         .expect("runtime migrator should tolerate newer applied migrations");
         tolerant_pool.close().await;
 
+        let _ = tokio::fs::remove_dir_all(codex_home).await;
+    }
+
+    #[tokio::test]
+    async fn init_repairs_missing_thread_goals_table_when_migration_was_marked_successful() {
+        let codex_home = unique_temp_dir();
+        tokio::fs::create_dir_all(&codex_home)
+            .await
+            .expect("create codex home");
+        let state_path = state_db_path(codex_home.as_path());
+        let pool = SqlitePool::connect_with(
+            SqliteConnectOptions::new()
+                .filename(&state_path)
+                .create_if_missing(true),
+        )
+        .await
+        .expect("open state db");
+        STATE_MIGRATOR
+            .run(&pool)
+            .await
+            .expect("apply current state schema");
+        sqlx::query("DROP TABLE thread_goals")
+            .execute(&pool)
+            .await
+            .expect("drop thread goals table");
+        pool.close().await;
+
+        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
+            .await
+            .expect("state runtime should repair missing thread_goals table");
+        let table_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'thread_goals'",
+        )
+        .fetch_one(runtime.pool.as_ref())
+        .await
+        .expect("query repaired schema");
+        assert_eq!(table_count, 1);
+
+        runtime.pool.close().await;
+        runtime.logs_pool.close().await;
         let _ = tokio::fs::remove_dir_all(codex_home).await;
     }
 

@@ -10,6 +10,67 @@ use pretty_assertions::assert_eq;
 use std::collections::VecDeque;
 
 #[tokio::test]
+async fn initial_follow_up_submits_as_steer_when_initial_turn_starts() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.initial_user_message = Some(UserMessage::from("initial goal"));
+    chat.initial_follow_up_messages = vec![UserMessage::from("Focus on free product vulns.")];
+
+    let thread_id = ThreadId::new();
+    let rollout_file = NamedTempFile::new().unwrap();
+    let configured = crate::session_state::ThreadSessionState {
+        thread_id,
+        forked_from_id: None,
+        fork_parent_title: None,
+        thread_name: None,
+        model: "test-model".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::Never,
+        approvals_reviewer: ApprovalsReviewer::User,
+        permission_profile: PermissionProfile::read_only(),
+        active_permission_profile: None,
+        cwd: test_path_buf("/home/user/project").abs(),
+        runtime_workspace_roots: Vec::new(),
+        instruction_source_paths: Vec::new(),
+        reasoning_effort: Some(ReasoningEffortConfig::default()),
+        message_history: None,
+        network_proxy: None,
+        rollout_path: Some(rollout_file.path().to_path_buf()),
+    };
+
+    chat.handle_thread_session(configured);
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => assert_eq!(
+            items,
+            vec![UserInput::Text {
+                text: "initial goal".to_string(),
+                text_elements: Vec::new(),
+            }]
+        ),
+        other => panic!("expected initial goal user turn, got {other:?}"),
+    }
+    assert!(chat.input_queue.queued_user_messages.is_empty());
+    assert!(chat.input_queue.pending_steers.is_empty());
+
+    handle_turn_started(&mut chat, "turn-1");
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => assert_eq!(
+            items,
+            vec![UserInput::Text {
+                text: "Focus on free product vulns.".to_string(),
+                text_elements: Vec::new(),
+            }]
+        ),
+        other => panic!("expected immediate follow-up steer, got {other:?}"),
+    }
+    assert!(chat.input_queue.queued_user_messages.is_empty());
+    assert_eq!(chat.input_queue.pending_steers.len(), 1);
+}
+
+#[tokio::test]
 async fn submission_preserves_text_elements_and_local_images() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

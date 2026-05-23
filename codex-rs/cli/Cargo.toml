@@ -13,6 +13,14 @@ path = "src/main.rs"
 name = "bb-codex"
 path = "src/bin/bb-codex.rs"
 
+[[bin]]
+name = "bb-codex-dev"
+path = "src/bin/bb-codex-dev.rs"
+
+[[bin]]
+name = "bbc-codex"
+path = "src/bin/bbc-codex.rs"
+
 [lib]
 name = "codex_cli"
 path = "src/lib.rs"

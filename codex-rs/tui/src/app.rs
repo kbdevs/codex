@@ -116,6 +116,7 @@ use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::SkillErrorInfo;
 use codex_app_server_protocol::SkillsListParams;
 use codex_app_server_protocol::SkillsListResponse;
+use codex_app_server_protocol::ThreadGoalStatus;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadMemoryMode;
@@ -959,14 +960,17 @@ See the Codex keymap documentation for supported actions and examples."
             let thread_id = started.session.thread_id;
             app.enqueue_primary_thread_session(started.session, started.turns)
                 .await?;
-            if let Some(objective) = initial_goal_prompt {
-                app.set_thread_goal_objective(
-                    &mut app_server,
-                    thread_id,
-                    objective,
-                    crate::app_event::ThreadGoalSetMode::ConfirmIfExists,
-                )
-                .await;
+            if let Some(objective) = initial_goal_prompt
+                && let Err(err) = app_server
+                    .thread_goal_set(
+                        thread_id,
+                        Some(objective),
+                        Some(ThreadGoalStatus::Active),
+                        /*token_budget*/ None,
+                    )
+                    .await
+            {
+                tracing::warn!("failed to set initial thread goal: {err}");
             }
             if should_prompt_for_paused_goal_after_startup_resume {
                 app.maybe_prompt_resume_paused_goal_after_resume(&mut app_server, thread_id)

@@ -26,6 +26,7 @@ members = [
     "cloud-tasks",
     "cloud-tasks-client",
     "cloud-tasks-mock-client",
+    "bb-codex-ni",
     "cli",
     "collaboration-mode-templates",
     "connectors",

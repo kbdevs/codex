@@ -4,7 +4,8 @@
   "license": "Apache-2.0",
   "bin": {
     "codex": "bin/codex.js",
-    "bb-codex": "bin/bb-codex.js"
+    "bb-codex": "bin/bb-codex.js",
+    "bbc-codex": "bin/bbc-codex.js"
   },
   "type": "module",
   "engines": {

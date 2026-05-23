@@ -126,7 +126,6 @@ impl ChatWidget {
                 self.initial_user_message = Some(user_message);
             } else {
                 self.submit_user_message(user_message);
-                self.queue_initial_follow_up_messages();
             }
         } else if !self.suppress_initial_user_message_submit {
             self.queue_initial_follow_up_messages();

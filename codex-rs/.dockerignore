@@ -1,0 +1,8 @@
+/target
+/target-*
+.git/
+.jj/
+node_modules/
+tmp/
+dist/
+*.log
