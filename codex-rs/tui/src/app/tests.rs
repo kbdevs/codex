@@ -4699,6 +4699,102 @@ async fn first_cancelled_turn_edit_restores_prompt_without_local_history() {
 }
 
 #[tokio::test]
+async fn undo_last_turn_rolls_back_latest_user_turn_without_restoring_prompt() {
+    let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    app.transcript_cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "hello".to_string(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn HistoryCell>,
+        Arc::new(AgentMessageCell::new(
+            vec![Line::from("hey")],
+            /*is_first_line*/ true,
+        )) as Arc<dyn HistoryCell>,
+        Arc::new(UserHistoryCell {
+            message: "what are you doing?".to_string(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn HistoryCell>,
+        Arc::new(AgentMessageCell::new(
+            vec![Line::from("working")],
+            /*is_first_line*/ true,
+        )) as Arc<dyn HistoryCell>,
+    ];
+
+    app.undo_last_turn();
+
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "");
+    assert_matches!(op_rx.try_recv(), Ok(Op::ThreadRollback { num_turns: 1 }));
+
+    app.handle_backtrack_rollback_succeeded(/*num_turns*/ 1);
+
+    let rendered = app
+        .transcript_cells
+        .iter()
+        .flat_map(|cell| cell.raw_lines())
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(rendered, vec!["hello", "hey"]);
+}
+
+#[tokio::test]
+async fn undo_last_turn_starts_new_session_when_no_user_turn_exists() {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+
+    app.undo_last_turn();
+
+    assert_matches!(app_event_rx.try_recv(), Ok(AppEvent::NewSession));
+}
+
+#[tokio::test]
+async fn transcript_export_writes_markdown_in_session_cwd() -> Result<()> {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let temp_dir = tempdir()?;
+    let thread_id = ThreadId::new();
+    app.chat_widget.handle_thread_session(test_thread_session(
+        thread_id,
+        temp_dir.path().to_path_buf(),
+    ));
+    app.transcript_cells = vec![
+        Arc::new(UserHistoryCell {
+            message: "hello".to_string(),
+            text_elements: Vec::new(),
+            local_image_paths: Vec::new(),
+            remote_image_urls: Vec::new(),
+        }) as Arc<dyn HistoryCell>,
+        Arc::new(AgentMarkdownCell::new(
+            "hey\n\n```text\nok\n```".to_string(),
+            temp_dir.path(),
+        )) as Arc<dyn HistoryCell>,
+    ];
+
+    app.export_transcript_to_markdown();
+
+    let files = std::fs::read_dir(temp_dir.path())?.collect::<std::io::Result<Vec<_>>>()?;
+    assert_eq!(files.len(), 1);
+    let path = files[0].path();
+    assert!(
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("codex-chat-export-") && name.ends_with(".md"))
+    );
+    let markdown = std::fs::read_to_string(path)?;
+    assert_eq!(
+        markdown,
+        "# Codex Chat Export\n\n## User\n\nhello\n\n## Codex\n\nhey\n\n```text\nok\n```\n\n"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
     let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
 

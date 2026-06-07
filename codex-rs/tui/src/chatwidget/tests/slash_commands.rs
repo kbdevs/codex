@@ -1691,6 +1691,24 @@ async fn slash_clear_requests_ui_clear_when_idle() {
 }
 
 #[tokio::test]
+async fn slash_undo_requests_latest_turn_rollback() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::Undo);
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::UndoLastTurn));
+}
+
+#[tokio::test]
+async fn slash_export_requests_transcript_export() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::Export);
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::ExportTranscript));
+}
+
+#[tokio::test]
 async fn slash_clear_after_ctrl_c_keeps_stashed_draft_recallable() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let thread_id = ThreadId::new();

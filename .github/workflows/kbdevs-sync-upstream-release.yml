@@ -1,0 +1,50 @@
+name: kbdevs-sync-upstream-release
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: sync latest upstream release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Resolve latest upstream release
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$(gh release view --repo openai/codex --json tagName -q .tagName)"
+          fork_tag="kbdevs-${tag}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "fork_tag=${fork_tag}" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/${fork_tag}" >/dev/null; then
+            echo "already_released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_released=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Merge upstream release tag
+        if: steps.upstream.outputs.already_released == 'false'
+        run: |
+          git remote add upstream https://github.com/openai/codex.git
+          git fetch upstream --tags
+          git checkout main
+          git merge --no-edit "${{ steps.upstream.outputs.tag }}"
+          git push origin main
+      - name: Tag fork release
+        if: steps.upstream.outputs.already_released == 'false'
+        run: |
+          git tag "${{ steps.upstream.outputs.fork_tag }}"
+          git push origin "${{ steps.upstream.outputs.fork_tag }}"

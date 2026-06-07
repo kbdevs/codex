@@ -202,6 +202,12 @@ impl ChatWidget {
             SlashCommand::Fork => {
                 self.app_event_tx.send(AppEvent::ForkCurrentSession);
             }
+            SlashCommand::Undo => {
+                self.app_event_tx.send(AppEvent::UndoLastTurn);
+            }
+            SlashCommand::Export => {
+                self.app_event_tx.send(AppEvent::ExportTranscript);
+            }
             SlashCommand::App => {
                 let Some(thread_id) = self.thread_id else {
                     self.add_error_message(

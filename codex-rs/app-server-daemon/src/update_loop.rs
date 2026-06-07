@@ -155,14 +155,16 @@ pub(crate) fn reexec_managed_updater(managed_codex_bin: &std::path::Path) -> Res
 
 #[cfg(unix)]
 async fn install_latest_standalone() -> Result<()> {
-    let script = reqwest::get("https://chatgpt.com/codex/install.sh")
-        .await
-        .context("failed to fetch standalone Codex updater")?
-        .error_for_status()
-        .context("standalone Codex updater request failed")?
-        .bytes()
-        .await
-        .context("failed to read standalone Codex updater")?;
+    let script = reqwest::get(
+        "https://raw.githubusercontent.com/kbdevs/codex/main/scripts/install-kbdevs-codex.sh",
+    )
+    .await
+    .context("failed to fetch standalone Codex updater")?
+    .error_for_status()
+    .context("standalone Codex updater request failed")?
+    .bytes()
+    .await
+    .context("failed to read standalone Codex updater")?;
 
     let mut child = Command::new("/bin/sh")
         .arg("-s")

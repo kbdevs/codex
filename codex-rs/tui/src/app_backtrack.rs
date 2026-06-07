@@ -262,6 +262,33 @@ impl App {
         self.chat_widget.restore_user_message_to_composer(prompt);
     }
 
+    pub(crate) fn undo_last_turn(&mut self) {
+        if self.backtrack.pending_rollback.is_some() {
+            self.chat_widget
+                .add_error_message("Backtrack rollback already in progress.".to_string());
+            return;
+        }
+
+        let user_total = user_count(&self.transcript_cells);
+        if user_total == 0 {
+            self.app_event_tx.send(AppEvent::NewSession);
+            return;
+        }
+
+        self.backtrack.pending_rollback = Some(PendingBacktrackRollback {
+            selection: BacktrackSelection {
+                nth_user_message: user_total.saturating_sub(1),
+                prefill: String::new(),
+                text_elements: Vec::new(),
+                local_image_paths: Vec::new(),
+                remote_image_urls: Vec::new(),
+            },
+            thread_id: self.chat_widget.thread_id(),
+        });
+        self.chat_widget
+            .submit_op(AppCommand::thread_rollback(/*num_turns*/ 1));
+    }
+
     /// Open transcript overlay (enters alternate screen and shows full transcript).
     pub(crate) fn open_transcript_overlay(&mut self, tui: &mut tui::Tui) {
         let _ = tui.enter_alt_screen();

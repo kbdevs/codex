@@ -33,6 +33,8 @@ pub enum SlashCommand {
     Archive,
     Resume,
     Fork,
+    Undo,
+    Export,
     App,
     Init,
     Compact,
@@ -91,6 +93,8 @@ impl SlashCommand {
             SlashCommand::Archive => "archive this session and exit",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
+            SlashCommand::Undo => "roll back the latest user turn",
+            SlashCommand::Export => "export the current chat as markdown",
             SlashCommand::App => "continue this session in Codex Desktop",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
@@ -172,6 +176,7 @@ impl SlashCommand {
         matches!(
             self,
             SlashCommand::Copy
+                | SlashCommand::Export
                 | SlashCommand::Raw
                 | SlashCommand::Diff
                 | SlashCommand::Mention
@@ -187,6 +192,7 @@ impl SlashCommand {
             | SlashCommand::Archive
             | SlashCommand::Resume
             | SlashCommand::Fork
+            | SlashCommand::Undo
             | SlashCommand::Init
             | SlashCommand::Compact
             | SlashCommand::Model
@@ -205,6 +211,7 @@ impl SlashCommand {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
+            | SlashCommand::Export
             | SlashCommand::Copy
             | SlashCommand::Raw
             | SlashCommand::Rename

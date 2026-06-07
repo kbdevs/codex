@@ -61,6 +61,14 @@ impl App {
                 )
                 .await;
             }
+            AppEvent::UndoLastTurn => {
+                self.undo_last_turn();
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::ExportTranscript => {
+                self.export_transcript_to_markdown();
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::OpenResumePicker => {
                 let picker_app_server = match crate::start_app_server_for_picker(
                     &self.config,

@@ -215,6 +215,12 @@ pub(crate) enum AppEvent {
     /// Fork the current session into a new thread.
     ForkCurrentSession,
 
+    /// Roll back the latest user turn, or start a new session when there is no turn to undo.
+    UndoLastTurn,
+
+    /// Export the visible transcript to a markdown file in the current working directory.
+    ExportTranscript,
+
     /// Request to exit the application.
     ///
     /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the

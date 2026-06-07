@@ -8,13 +8,13 @@ use codex_install_context::StandalonePlatform;
 /// Update action the CLI should perform after the TUI exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateAction {
-    /// Update via `npm install -g @openai/codex@latest`.
+    /// Update via `npm install -g @kbdevs/codex@latest`.
     NpmGlobalLatest,
-    /// Update via `bun install -g @openai/codex@latest`.
+    /// Update via `bun install -g @kbdevs/codex@latest`.
     BunGlobalLatest,
     /// Update via `brew upgrade codex`.
     BrewUpgrade,
-    /// Update via `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh`.
+    /// Update via the latest kbdevs/codex GitHub release.
     StandaloneUnix,
     /// Update via `$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex`.
     StandaloneWindows,
@@ -38,14 +38,14 @@ impl UpdateAction {
     /// Returns the list of command-line arguments for invoking the update.
     pub fn command_args(self) -> (&'static str, &'static [&'static str]) {
         match self {
-            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "@openai/codex"]),
-            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "@openai/codex"]),
+            UpdateAction::NpmGlobalLatest => ("npm", &["install", "-g", "@kbdevs/codex"]),
+            UpdateAction::BunGlobalLatest => ("bun", &["install", "-g", "@kbdevs/codex"]),
             UpdateAction::BrewUpgrade => ("brew", &["upgrade", "--cask", "codex"]),
             UpdateAction::StandaloneUnix => (
                 "sh",
                 &[
                     "-c",
-                    "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+                    "curl -fsSL https://raw.githubusercontent.com/kbdevs/codex/main/scripts/install-kbdevs-codex.sh | CODEX_NON_INTERACTIVE=1 sh",
                 ],
             ),
             UpdateAction::StandaloneWindows => (
@@ -145,7 +145,7 @@ mod tests {
                 "sh",
                 &[
                     "-c",
-                    "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"
+                    "curl -fsSL https://raw.githubusercontent.com/kbdevs/codex/main/scripts/install-kbdevs-codex.sh | CODEX_NON_INTERACTIVE=1 sh"
                 ][..],
             )
         );
