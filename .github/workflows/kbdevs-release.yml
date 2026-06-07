@@ -79,8 +79,7 @@ jobs:
       - name: Install sccache
         uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
         with:
-          tool: sccache
-          version: 0.7.5
+          tool: sccache@0.7.5
 
       - name: Configure sccache
         shell: bash
@@ -111,22 +110,17 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
-      - name: Install cargo-chef
-        uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
-        with:
-          tool: cargo-chef
-          version: 0.1.71
+      - name: Build Codex
+        run: cargo build --locked --release --timings --target ${{ matrix.target }} --bin codex
 
-      - name: Pre-warm dependency build cache
+      - name: Smoke test Codex binary
         shell: bash
         run: |
           set -euo pipefail
-          recipe="${RUNNER_TEMP}/chef-recipe.json"
-          cargo chef prepare --recipe-path "$recipe"
-          cargo chef cook --locked --recipe-path "$recipe" --target ${{ matrix.target }} --release --bin codex
-
-      - name: Build Codex
-        run: cargo build --locked --release --timings --target ${{ matrix.target }} --bin codex
+          binary="target/${{ matrix.target }}/release/codex"
+          version="$("$binary" --version)"
+          test -n "$version"
+          echo "Built ${version}"
 
       - name: Package binary
         shell: bash
