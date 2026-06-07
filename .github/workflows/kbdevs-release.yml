@@ -33,11 +33,15 @@ jobs:
     defaults:
       run:
         working-directory: codex-rs
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - name: Install active toolchain target
+        run: rustup target add ${{ matrix.target }}
       - name: Install Linux musl tools
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
