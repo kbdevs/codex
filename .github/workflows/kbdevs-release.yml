@@ -29,6 +29,8 @@ jobs:
         working-directory: codex-rs
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: true
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+      CARGO_PROFILE_RELEASE_LTO: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
