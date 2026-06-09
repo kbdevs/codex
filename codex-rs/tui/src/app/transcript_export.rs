@@ -7,6 +7,9 @@ use ratatui::text::Line;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+pub(crate) const EXPORT_HEADER: &str = "# Codex Chat Export";
+const SECTION_MARKER_PREFIX: &str = "<!-- codex-export-section:";
+
 impl App {
     pub(super) fn export_transcript_to_markdown(&mut self) {
         let cwd = self.chat_widget.status_line_cwd().to_path_buf();
@@ -34,7 +37,8 @@ impl App {
     }
 
     fn transcript_markdown(&self) -> String {
-        let mut out = String::from("# Codex Chat Export\n\n");
+        let mut out = String::from(EXPORT_HEADER);
+        out.push_str("\n\n");
         for cell in &self.transcript_cells {
             if let Some(user) = cell.as_any().downcast_ref::<UserHistoryCell>() {
                 push_section(&mut out, "User", &user.raw_lines());
@@ -56,6 +60,10 @@ fn push_section(out: &mut String, heading: &str, lines: &[Line<'static>]) {
         return;
     }
 
+    out.push_str(SECTION_MARKER_PREFIX);
+    out.push(' ');
+    out.push_str(heading);
+    out.push_str(" -->\n");
     out.push_str("## ");
     out.push_str(heading);
     out.push_str("\n\n");

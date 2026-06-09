@@ -4789,7 +4789,15 @@ async fn transcript_export_writes_markdown_in_session_cwd() -> Result<()> {
     let markdown = std::fs::read_to_string(path)?;
     assert_eq!(
         markdown,
-        "# Codex Chat Export\n\n## User\n\nhello\n\n## Codex\n\nhey\n\n```text\nok\n```\n\n"
+        concat!(
+            "# Codex Chat Export\n\n",
+            "<!-- codex-export-section: User -->\n",
+            "## User\n\n",
+            "hello\n\n",
+            "<!-- codex-export-section: Codex -->\n",
+            "## Codex\n\n",
+            "hey\n\n```text\nok\n```\n\n",
+        )
     );
     Ok(())
 }

@@ -1709,6 +1709,22 @@ async fn slash_export_requests_transcript_export() {
 }
 
 #[tokio::test]
+async fn slash_import_requests_transcript_import() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command_with_args(
+        SlashCommand::Import,
+        "codex-chat-export.md".to_string(),
+        Vec::new(),
+    );
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::ImportTranscript { path }) if path == "codex-chat-export.md"
+    );
+}
+
+#[tokio::test]
 async fn slash_clear_after_ctrl_c_keeps_stashed_draft_recallable() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let thread_id = ThreadId::new();

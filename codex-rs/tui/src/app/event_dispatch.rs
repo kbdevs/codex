@@ -69,6 +69,10 @@ impl App {
                 self.export_transcript_to_markdown();
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::ImportTranscript { path } => {
+                self.import_transcript_from_markdown(tui, &path);
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::OpenResumePicker => {
                 let picker_app_server = match crate::start_app_server_for_picker(
                     &self.config,

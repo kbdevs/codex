@@ -35,6 +35,7 @@ pub enum SlashCommand {
     Fork,
     Undo,
     Export,
+    Import,
     App,
     Init,
     Compact,
@@ -95,6 +96,7 @@ impl SlashCommand {
             SlashCommand::Fork => "fork the current chat",
             SlashCommand::Undo => "roll back the latest user turn",
             SlashCommand::Export => "export the current chat as markdown",
+            SlashCommand::Import => "import a markdown chat export: /import <path>",
             SlashCommand::App => "continue this session in Codex Desktop",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Copy => "copy last response as markdown",
@@ -163,6 +165,7 @@ impl SlashCommand {
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
                 | SlashCommand::Raw
+                | SlashCommand::Import
                 | SlashCommand::Pets
                 | SlashCommand::Side
                 | SlashCommand::Btw
@@ -193,6 +196,7 @@ impl SlashCommand {
             | SlashCommand::Resume
             | SlashCommand::Fork
             | SlashCommand::Undo
+            | SlashCommand::Import
             | SlashCommand::Init
             | SlashCommand::Compact
             | SlashCommand::Model

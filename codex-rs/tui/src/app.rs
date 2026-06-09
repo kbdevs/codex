@@ -221,6 +221,7 @@ mod thread_routing;
 mod thread_session_state;
 mod thread_settings;
 mod transcript_export;
+mod transcript_import;
 
 use self::agent_navigation::AgentNavigationDirection;
 use self::agent_navigation::AgentNavigationState;

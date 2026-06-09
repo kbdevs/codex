@@ -221,6 +221,11 @@ pub(crate) enum AppEvent {
     /// Export the visible transcript to a markdown file in the current working directory.
     ExportTranscript,
 
+    /// Import a markdown transcript previously written by `/export`.
+    ImportTranscript {
+        path: String,
+    },
+
     /// Request to exit the application.
     ///
     /// Use `ShutdownFirst` for user-initiated quits so core cleanup runs and the

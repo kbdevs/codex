@@ -208,6 +208,9 @@ impl ChatWidget {
             SlashCommand::Export => {
                 self.app_event_tx.send(AppEvent::ExportTranscript);
             }
+            SlashCommand::Import => {
+                self.add_error_message("Usage: /import <path>".to_string());
+            }
             SlashCommand::App => {
                 let Some(thread_id) = self.thread_id else {
                     self.add_error_message(
@@ -821,6 +824,10 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::ResumeSessionByIdOrName(args));
             }
+            SlashCommand::Import if !trimmed.is_empty() => {
+                self.app_event_tx
+                    .send(AppEvent::ImportTranscript { path: args });
+            }
             SlashCommand::SandboxReadRoot if !trimmed.is_empty() => {
                 self.app_event_tx
                     .send(AppEvent::BeginWindowsSandboxGrantReadRoot { path: args });
@@ -991,6 +998,7 @@ impl ChatWidget {
             | SlashCommand::Vim
             | SlashCommand::Diff
             | SlashCommand::Export
+            | SlashCommand::Import
             | SlashCommand::App
             | SlashCommand::Rename
             | SlashCommand::TestApproval => QueueDrain::Continue,
