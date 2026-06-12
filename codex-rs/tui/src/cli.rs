@@ -12,6 +12,10 @@ pub struct Cli {
     #[arg(value_name = "PROMPT", value_hint = clap::ValueHint::Other)]
     pub prompt: Option<String>,
 
+    /// Internal: persist an initial thread goal when the TUI session is ready.
+    #[arg(long = "initial-goal-prompt", value_name = "GOAL", hide = true)]
+    pub initial_goal_prompt: Option<String>,
+
     /// Error out when config.toml contains fields that are not recognized by this version of Codex.
     #[arg(long = "strict-config", default_value_t = false)]
     pub strict_config: bool,

@@ -2154,6 +2154,14 @@ async fn run_interactive_tui(
         // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
         interactive.prompt = Some(prompt.replace("\r\n", "\n").replace('\r', "\n"));
     }
+    if let Some(initial_goal_prompt) = interactive.initial_goal_prompt.take() {
+        // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
+        interactive.initial_goal_prompt = Some(
+            initial_goal_prompt
+                .replace("\r\n", "\n")
+                .replace('\r', "\n"),
+        );
+    }
 
     let terminal_info = codex_terminal_detection::terminal_info();
     if terminal_info.name == TerminalName::Dumb {
@@ -2372,6 +2380,7 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
         approval_policy,
         web_search,
         prompt,
+        initial_goal_prompt,
         config_overrides,
         ..
     } = subcommand_cli;
@@ -2390,6 +2399,13 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
     if let Some(prompt) = prompt {
         // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
         interactive.prompt = Some(prompt.replace("\r\n", "\n").replace('\r', "\n"));
+    }
+    if let Some(initial_goal_prompt) = initial_goal_prompt {
+        interactive.initial_goal_prompt = Some(
+            initial_goal_prompt
+                .replace("\r\n", "\n")
+                .replace('\r', "\n"),
+        );
     }
 
     interactive
@@ -2597,6 +2613,29 @@ mod tests {
                 .as_deref(),
             Some("work")
         );
+    }
+
+    #[test]
+    fn root_initial_goal_prompt_parses_as_interactive_option() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "--initial-goal-prompt",
+            "Finish the release checklist.",
+        ])
+        .expect("parse");
+
+        assert_eq!(
+            cli.interactive.initial_goal_prompt.as_deref(),
+            Some("Finish the release checklist.")
+        );
+        assert_eq!(cli.interactive.prompt.as_deref(), None);
+    }
+
+    #[test]
+    fn initial_goal_prompt_is_hidden_from_root_help() {
+        let help = help_from_args(&["codex", "--help"]);
+
+        assert!(!help.contains("initial-goal-prompt"));
     }
 
     #[test]
@@ -3090,6 +3129,26 @@ mod tests {
     }
 
     #[test]
+    fn resume_accepts_initial_goal_prompt_without_user_prompt() {
+        let interactive = finalize_resume_from_args(
+            [
+                "codex",
+                "resume",
+                "--last",
+                "--initial-goal-prompt",
+                "Finish\r\nthe\rlaunch.",
+            ]
+            .as_ref(),
+        );
+
+        assert_eq!(
+            interactive.initial_goal_prompt.as_deref(),
+            Some("Finish\nthe\nlaunch.")
+        );
+        assert_eq!(interactive.prompt.as_deref(), None);
+    }
+
+    #[test]
     fn resume_last_rejects_explicit_session_and_prompt() {
         let err =
             MultitoolCli::try_parse_from(["codex", "resume", "--last", "1234", "continue here"])
@@ -3249,6 +3308,26 @@ mod tests {
             interactive.prompt.as_deref(),
             Some("/compact focus on auth")
         );
+    }
+
+    #[test]
+    fn fork_accepts_initial_goal_prompt_without_user_prompt() {
+        let interactive = finalize_fork_from_args(
+            [
+                "codex",
+                "fork",
+                "--last",
+                "--initial-goal-prompt",
+                "Finish\r\nthe\rlaunch.",
+            ]
+            .as_ref(),
+        );
+
+        assert_eq!(
+            interactive.initial_goal_prompt.as_deref(),
+            Some("Finish\nthe\nlaunch.")
+        );
+        assert_eq!(interactive.prompt.as_deref(), None);
     }
 
     #[test]

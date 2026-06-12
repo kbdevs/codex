@@ -1763,6 +1763,7 @@ async fn run_ratatui_app(
 
     let Cli {
         prompt,
+        initial_goal_prompt,
         shared,
         no_alt_screen,
         ..
@@ -1851,6 +1852,7 @@ async fn run_ratatui_app(
         loader_overrides.clone(),
         cloud_config_bundle,
         prompt,
+        initial_goal_prompt,
         images,
         session_selection,
         feedback,

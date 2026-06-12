@@ -558,6 +558,7 @@ pub(crate) struct App {
     pending_primary_events: VecDeque<ThreadBufferedEvent>,
     pending_app_server_requests: PendingAppServerRequests,
     pending_startup_thread_start: bool,
+    initial_goal_prompt: Option<String>,
     // Serialize plugin enablement writes per plugin so stale completions cannot
     // overwrite a newer toggle, even if the plugin is toggled from different
     // cwd contexts.
@@ -726,6 +727,7 @@ impl App {
         loader_overrides: LoaderOverrides,
         cloud_config_bundle: CloudConfigBundleLoader,
         initial_prompt: Option<String>,
+        initial_goal_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
         session_selection: SessionSelection,
         feedback: codex_feedback::CodexFeedback,
@@ -1046,6 +1048,7 @@ See the Codex keymap documentation for supported actions and examples."
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_startup_thread_start,
+            initial_goal_prompt,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
         };
@@ -1057,6 +1060,8 @@ See the Codex keymap documentation for supported actions and examples."
             let thread_id = started.session.thread_id;
             app.enqueue_primary_thread_session(started.session, started.turns)
                 .await?;
+            app.set_initial_thread_goal_if_requested(&mut app_server, thread_id)
+                .await;
             if should_prompt_for_paused_goal_after_startup_resume {
                 app.maybe_prompt_resume_paused_goal_after_resume(&mut app_server, thread_id)
                     .await;

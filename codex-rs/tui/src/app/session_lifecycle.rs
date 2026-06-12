@@ -448,8 +448,11 @@ impl App {
             .set_queue_submissions_until_session_configured(/*queue*/ false);
         match result {
             Ok(started) => {
+                let thread_id = started.session.thread_id;
                 self.enqueue_primary_thread_session(started.session, started.turns)
                     .await?;
+                self.set_initial_thread_goal_if_requested(app_server, thread_id)
+                    .await;
                 self.chat_widget.maybe_send_next_queued_input();
             }
             Err(err) => {

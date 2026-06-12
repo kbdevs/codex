@@ -19,6 +19,29 @@ const EPHEMERAL_THREAD_GOAL_ERROR_MESSAGE: &str = concat!(
 );
 
 impl App {
+    pub(super) async fn set_initial_thread_goal_if_requested(
+        &mut self,
+        app_server: &mut AppServerSession,
+        thread_id: ThreadId,
+    ) {
+        let Some(objective) = self.initial_goal_prompt.take() else {
+            return;
+        };
+
+        let result = app_server
+            .thread_goal_set(
+                thread_id,
+                Some(objective),
+                Some(ThreadGoalStatus::Active),
+                /*token_budget*/ None,
+            )
+            .await;
+        if let Err(err) = result {
+            self.chat_widget
+                .add_error_message(thread_goal_error_message("set initial", &err));
+        }
+    }
+
     pub(super) async fn open_thread_goal_menu(
         &mut self,
         app_server: &mut AppServerSession,
