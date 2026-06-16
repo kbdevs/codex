@@ -140,6 +140,14 @@ fn test_supports_remote_compaction_for_openai() {
 }
 
 #[test]
+fn default_stream_recovery_settings_are_fast_enough_for_connection_handoffs() {
+    let provider = ModelProviderInfo::create_openai_provider(/*base_url*/ None);
+
+    assert_eq!(provider.stream_idle_timeout().as_millis(), 30_000);
+    assert_eq!(provider.stream_max_retries(), 10);
+}
+
+#[test]
 fn test_personal_access_token_uses_chatgpt_codex_base_url() {
     let api_provider = ModelProviderInfo::create_openai_provider(/*base_url*/ None)
         .to_api_provider(Some(AuthMode::PersonalAccessToken))

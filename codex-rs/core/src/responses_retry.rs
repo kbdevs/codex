@@ -11,6 +11,8 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::WarningEvent;
 use tracing::warn;
 
+const MAX_STREAM_RETRY_DELAY: Duration = Duration::from_secs(5);
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ResponsesStreamRequest {
     Sampling,
@@ -53,24 +55,18 @@ pub(crate) async fn handle_retryable_response_stream_error(
                 requested_delay.unwrap_or_else(|| backoff(retry_count))
             }
             _ => backoff(retry_count),
-        };
+        }
+        .min(MAX_STREAM_RETRY_DELAY);
         log_retry(request, turn_context, &err, retry_count, max_retries, delay);
 
-        // In release builds, hide the first websocket retry notification to reduce noisy
-        // transient reconnect messages. In debug builds, keep full visibility for diagnosis.
-        let report_error = retry_count > 1
-            || cfg!(debug_assertions)
-            || !sess.services.model_client.responses_websocket_enabled();
-        if report_error {
-            // Surface retry information to any UI/front-end so the user understands what is
-            // happening instead of staring at a seemingly frozen screen.
-            sess.notify_stream_error(
-                turn_context,
-                format!("Reconnecting... {retry_count}/{max_retries}"),
-                err,
-            )
-            .await;
-        }
+        // Surface retry information to any UI/front-end so the user understands what is
+        // happening instead of staring at a seemingly frozen screen.
+        sess.notify_stream_error(
+            turn_context,
+            format!("Reconnecting... {retry_count}/{max_retries}"),
+            err,
+        )
+        .await;
         tokio::time::sleep(delay).await;
         return Ok(());
     }
