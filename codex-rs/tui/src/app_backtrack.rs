@@ -275,18 +275,29 @@ impl App {
             return;
         }
 
-        self.backtrack.pending_rollback = Some(PendingBacktrackRollback {
-            selection: BacktrackSelection {
-                nth_user_message: user_total.saturating_sub(1),
+        let nth_user_message = user_total.saturating_sub(1);
+        let selection = self
+            .user_message_selection(nth_user_message)
+            .unwrap_or_else(|| BacktrackSelection {
+                nth_user_message,
                 prefill: String::new(),
                 text_elements: Vec::new(),
                 local_image_paths: Vec::new(),
                 remote_image_urls: Vec::new(),
-            },
+            });
+        let prefill = selection.prefill.clone();
+        let text_elements = selection.text_elements.clone();
+        let local_image_paths = selection.local_image_paths.clone();
+        let remote_image_urls = selection.remote_image_urls.clone();
+        self.backtrack.pending_rollback = Some(PendingBacktrackRollback {
+            selection,
             thread_id: self.chat_widget.thread_id(),
         });
         self.chat_widget
             .submit_op(AppCommand::thread_rollback(/*num_turns*/ 1));
+        self.chat_widget.set_remote_image_urls(remote_image_urls);
+        self.chat_widget
+            .set_composer_text(prefill, text_elements, local_image_paths);
     }
 
     /// Open transcript overlay (enters alternate screen and shows full transcript).
@@ -593,27 +604,20 @@ impl App {
             return None;
         }
 
-        let (prefill, text_elements, local_image_paths, remote_image_urls) =
-            nth_user_position(&self.transcript_cells, nth_user_message)
-                .and_then(|idx| self.transcript_cells.get(idx))
-                .and_then(|cell| cell.as_any().downcast_ref::<UserHistoryCell>())
-                .map(|cell| {
-                    (
-                        cell.message.clone(),
-                        cell.text_elements.clone(),
-                        cell.local_image_paths.clone(),
-                        cell.remote_image_urls.clone(),
-                    )
-                })
-                .unwrap_or_else(|| (String::new(), Vec::new(), Vec::new(), Vec::new()));
+        self.user_message_selection(nth_user_message)
+    }
 
-        Some(BacktrackSelection {
-            nth_user_message,
-            prefill,
-            text_elements,
-            local_image_paths,
-            remote_image_urls,
-        })
+    fn user_message_selection(&self, nth_user_message: usize) -> Option<BacktrackSelection> {
+        nth_user_position(&self.transcript_cells, nth_user_message)
+            .and_then(|idx| self.transcript_cells.get(idx))
+            .and_then(|cell| cell.as_any().downcast_ref::<UserHistoryCell>())
+            .map(|cell| BacktrackSelection {
+                nth_user_message,
+                prefill: cell.message.clone(),
+                text_elements: cell.text_elements.clone(),
+                local_image_paths: cell.local_image_paths.clone(),
+                remote_image_urls: cell.remote_image_urls.clone(),
+            })
     }
 
     /// Keep transcript-related UI state aligned after `transcript_cells` was trimmed.

@@ -1752,6 +1752,11 @@ impl ChatWidget {
     }
 
     #[cfg(test)]
+    pub(crate) fn composer_local_image_paths(&self) -> Vec<PathBuf> {
+        self.bottom_pane.composer_local_image_paths()
+    }
+
+    #[cfg(test)]
     pub(crate) fn pending_thread_approvals(&self) -> &[String] {
         self.bottom_pane.pending_thread_approvals()
     }

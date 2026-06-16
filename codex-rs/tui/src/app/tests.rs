@@ -4874,8 +4874,10 @@ async fn first_cancelled_turn_edit_restores_prompt_without_local_history() {
 }
 
 #[tokio::test]
-async fn undo_last_turn_rolls_back_latest_user_turn_without_restoring_prompt() {
+async fn undo_last_turn_rolls_back_latest_user_turn_and_restores_prompt() {
     let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    let local_image_path = PathBuf::from("/tmp/undo-image.png");
+    let remote_image_url = "https://example.com/undo.png".to_string();
     app.transcript_cells = vec![
         Arc::new(UserHistoryCell {
             message: "hello".to_string(),
@@ -4890,8 +4892,8 @@ async fn undo_last_turn_rolls_back_latest_user_turn_without_restoring_prompt() {
         Arc::new(UserHistoryCell {
             message: "what are you doing?".to_string(),
             text_elements: Vec::new(),
-            local_image_paths: Vec::new(),
-            remote_image_urls: Vec::new(),
+            local_image_paths: vec![local_image_path.clone()],
+            remote_image_urls: vec![remote_image_url.clone()],
         }) as Arc<dyn HistoryCell>,
         Arc::new(AgentMessageCell::new(
             vec![Line::from("working")],
@@ -4901,7 +4903,15 @@ async fn undo_last_turn_rolls_back_latest_user_turn_without_restoring_prompt() {
 
     app.undo_last_turn();
 
-    assert_eq!(app.chat_widget.composer_text_with_pending(), "");
+    assert_eq!(
+        app.chat_widget.composer_text_with_pending(),
+        "what are you doing?"
+    );
+    assert_eq!(app.chat_widget.remote_image_urls(), vec![remote_image_url]);
+    assert_eq!(
+        app.chat_widget.composer_local_image_paths(),
+        vec![local_image_path]
+    );
     assert_matches!(op_rx.try_recv(), Ok(Op::ThreadRollback { num_turns: 1 }));
 
     app.handle_backtrack_rollback_succeeded(/*num_turns*/ 1);
