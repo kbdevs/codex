@@ -987,6 +987,135 @@ async fn reconstruct_history_rollback_after_compaction_drops_latest_user_turn_an
 }
 
 #[tokio::test]
+async fn reconstruct_history_rollback_after_compaction_trims_compacted_history() {
+    let (session, turn_context) = make_session_and_context().await;
+    let turn_one_user = user_message("turn 1 user");
+    let turn_one_assistant = assistant_message("turn 1 assistant");
+    let turn_two_user = user_message("turn 2 user");
+    let turn_two_assistant = assistant_message("turn 2 assistant");
+    let compact_turn_id = "compact-truncated-rollout".to_string();
+
+    let rollout_items = vec![
+        RolloutItem::EventMsg(EventMsg::TurnStarted(
+            codex_protocol::protocol::TurnStartedEvent {
+                turn_id: compact_turn_id.clone(),
+                trace_id: None,
+                started_at: None,
+                model_context_window: Some(128_000),
+                collaboration_mode_kind: ModeKind::Default,
+            },
+        )),
+        RolloutItem::Compacted(CompactedItem {
+            message: "summary mentions turn 2".to_string(),
+            replacement_history: Some(vec![
+                turn_one_user.clone(),
+                turn_one_assistant.clone(),
+                turn_two_user,
+                turn_two_assistant,
+            ]),
+            window_id: None,
+        }),
+        RolloutItem::EventMsg(EventMsg::TurnComplete(
+            codex_protocol::protocol::TurnCompleteEvent {
+                turn_id: compact_turn_id,
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            },
+        )),
+        RolloutItem::EventMsg(EventMsg::ThreadRolledBack(
+            codex_protocol::protocol::ThreadRolledBackEvent { num_turns: 1 },
+        )),
+    ];
+
+    let reconstructed = session
+        .reconstruct_history_from_rollout(&turn_context, &rollout_items)
+        .await;
+
+    assert_eq!(
+        reconstructed.history,
+        vec![turn_one_user, turn_one_assistant]
+    );
+}
+
+#[tokio::test]
+async fn reconstruct_rollback_counts_raw_turns_before_trimming_compaction() {
+    let (session, turn_context) = make_session_and_context().await;
+    let turn_one_user = user_message("turn 1 user");
+    let turn_one_assistant = assistant_message("turn 1 assistant");
+    let turn_two_user = user_message("turn 2 user");
+    let turn_two_assistant = assistant_message("turn 2 assistant");
+    let turn_three_user = user_message("turn 3 user");
+    let turn_three_assistant = assistant_message("turn 3 assistant");
+    let compact_turn_id = "compact-before-raw-turn".to_string();
+    let raw_turn_id = "raw-turn-after-compaction".to_string();
+
+    let rollout_items = vec![
+        RolloutItem::EventMsg(EventMsg::TurnStarted(
+            codex_protocol::protocol::TurnStartedEvent {
+                turn_id: compact_turn_id.clone(),
+                trace_id: None,
+                started_at: None,
+                model_context_window: Some(128_000),
+                collaboration_mode_kind: ModeKind::Default,
+            },
+        )),
+        RolloutItem::Compacted(CompactedItem {
+            message: "summary mentions turn 2".to_string(),
+            replacement_history: Some(vec![
+                turn_one_user.clone(),
+                turn_one_assistant.clone(),
+                turn_two_user,
+                turn_two_assistant,
+            ]),
+            window_id: None,
+        }),
+        RolloutItem::EventMsg(EventMsg::TurnComplete(
+            codex_protocol::protocol::TurnCompleteEvent {
+                turn_id: compact_turn_id,
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            },
+        )),
+        RolloutItem::EventMsg(EventMsg::TurnStarted(
+            codex_protocol::protocol::TurnStartedEvent {
+                turn_id: raw_turn_id.clone(),
+                trace_id: None,
+                started_at: None,
+                model_context_window: Some(128_000),
+                collaboration_mode_kind: ModeKind::Default,
+            },
+        )),
+        RolloutItem::ResponseItem(turn_three_user),
+        RolloutItem::ResponseItem(turn_three_assistant),
+        RolloutItem::EventMsg(EventMsg::TurnComplete(
+            codex_protocol::protocol::TurnCompleteEvent {
+                turn_id: raw_turn_id,
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            },
+        )),
+        RolloutItem::EventMsg(EventMsg::ThreadRolledBack(
+            codex_protocol::protocol::ThreadRolledBackEvent { num_turns: 2 },
+        )),
+    ];
+
+    let reconstructed = session
+        .reconstruct_history_from_rollout(&turn_context, &rollout_items)
+        .await;
+
+    assert_eq!(
+        reconstructed.history,
+        vec![turn_one_user, turn_one_assistant]
+    );
+}
+
+#[tokio::test]
 async fn record_initial_history_resumed_bare_turn_context_does_not_seed_reference_context_item() {
     let (session, turn_context) = make_session_and_context().await;
     let previous_context_item = turn_context.to_turn_context_item();

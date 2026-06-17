@@ -360,6 +360,105 @@ struct ReplaySegment {
     counts_as_user_turn: bool,
 }
 
+fn drop_last_n_user_turns_from_response_items(
+    items: &[ResponseItem],
+    num_turns: usize,
+) -> Vec<ResponseItem> {
+    let mut history = ContextManager::new();
+    history.replace(items.to_vec());
+    history.drop_last_n_user_turns(u32::try_from(num_turns).unwrap_or(u32::MAX));
+    history.raw_items().to_vec()
+}
+
+fn latest_compaction_position(segments: &[ReplaySegment]) -> Option<(usize, usize)> {
+    segments
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(segment_idx, segment)| {
+            segment
+                .items
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(item_idx, item)| {
+                    matches!(
+                        item,
+                        RolloutItem::Compacted(CompactedItem {
+                            replacement_history: Some(_),
+                            ..
+                        })
+                    )
+                    .then_some((segment_idx, item_idx))
+                })
+        })
+}
+
+fn apply_rollback_to_compaction_segment(
+    segments: &mut Vec<ReplaySegment>,
+    segment_idx: usize,
+    item_idx: usize,
+    num_turns: usize,
+) {
+    if num_turns > 0
+        && let RolloutItem::Compacted(CompactedItem {
+            replacement_history: Some(replacement_history),
+            ..
+        }) = &segments[segment_idx].items[item_idx]
+    {
+        let adjusted_history =
+            drop_last_n_user_turns_from_response_items(replacement_history, num_turns);
+        if let RolloutItem::Compacted(compacted) = &mut segments[segment_idx].items[item_idx] {
+            compacted.replacement_history = Some(adjusted_history);
+        }
+    }
+
+    segments.truncate(segment_idx + 1);
+}
+
+fn apply_thread_rollback_to_segments(segments: &mut Vec<ReplaySegment>, num_turns: usize) {
+    if num_turns == 0 {
+        return;
+    }
+
+    let user_positions = segments
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, segment)| segment.counts_as_user_turn.then_some(idx))
+        .collect::<Vec<_>>();
+    if num_turns < user_positions.len() {
+        let cut_idx = user_positions[user_positions.len() - num_turns];
+        segments.truncate(cut_idx);
+        return;
+    }
+
+    if let Some((compaction_segment_idx, compaction_item_idx)) =
+        latest_compaction_position(segments)
+    {
+        let user_positions_after_compaction = segments
+            .iter()
+            .enumerate()
+            .skip(compaction_segment_idx + 1)
+            .filter_map(|(idx, segment)| segment.counts_as_user_turn.then_some(idx))
+            .collect::<Vec<_>>();
+        if num_turns <= user_positions_after_compaction.len() {
+            let cut_idx =
+                user_positions_after_compaction[user_positions_after_compaction.len() - num_turns];
+            segments.truncate(cut_idx);
+        } else {
+            apply_rollback_to_compaction_segment(
+                segments,
+                compaction_segment_idx,
+                compaction_item_idx,
+                num_turns - user_positions_after_compaction.len(),
+            );
+        }
+        return;
+    }
+
+    segments.clear();
+}
+
 fn rollout_items_after_thread_rollbacks(rollout_items: &[RolloutItem]) -> Vec<RolloutItem> {
     let mut segments = Vec::<ReplaySegment>::new();
     let mut active_segment = ReplaySegment::default();
@@ -379,21 +478,10 @@ fn rollout_items_after_thread_rollbacks(rollout_items: &[RolloutItem]) -> Vec<Ro
                     active_segment = ReplaySegment::default();
                 }
 
-                let num_turns = usize::try_from(rollback.num_turns).unwrap_or(usize::MAX);
-                if num_turns == 0 {
-                    continue;
-                }
-                let user_positions = segments
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, segment)| segment.counts_as_user_turn.then_some(idx))
-                    .collect::<Vec<_>>();
-                if num_turns >= user_positions.len() {
-                    segments.clear();
-                } else {
-                    let cut_idx = user_positions[user_positions.len() - num_turns];
-                    segments.truncate(cut_idx);
-                }
+                apply_thread_rollback_to_segments(
+                    &mut segments,
+                    usize::try_from(rollback.num_turns).unwrap_or(usize::MAX),
+                );
             }
             RolloutItem::EventMsg(EventMsg::UserMessage(_)) => {
                 active_segment.counts_as_user_turn = true;
