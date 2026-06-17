@@ -41,6 +41,7 @@ use codex_thread_store::ThreadMetadataPatch;
 use codex_thread_store::ThreadStoreError;
 use codex_thread_store::ThreadStoreResult;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_path_uri::PathUri;
 use rmcp::model::ReadResourceRequestParams;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -157,6 +158,14 @@ pub struct CodexThread {
     session_configured: SessionConfiguredEvent,
     rollout_path: Option<PathBuf>,
     out_of_band_elicitation_count: Mutex<u64>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct BackgroundTerminalInfo {
+    pub item_id: String,
+    pub process_id: String,
+    pub command: String,
+    pub cwd: PathUri,
 }
 
 /// Conduit for the bidirectional stream of messages that compose a thread
@@ -396,6 +405,17 @@ impl CodexThread {
         self.codex.agent_status().await
     }
 
+    pub async fn list_background_terminals(&self) -> Vec<BackgroundTerminalInfo> {
+        self.codex.session.list_background_terminals().await
+    }
+
+    pub async fn terminate_background_terminal(&self, process_id: i32) -> bool {
+        self.codex
+            .session
+            .terminate_background_terminal(process_id)
+            .await
+    }
+
     pub(crate) fn subscribe_status(&self) -> watch::Receiver<AgentStatus> {
         self.codex.agent_status.clone()
     }
@@ -418,6 +438,7 @@ impl CodexThread {
             role: "user".to_string(),
             content: vec![ContentItem::InputText { text: message }],
             phase: None,
+            metadata: None,
         };
         self.codex
             .session
@@ -529,6 +550,11 @@ impl CodexThread {
 
     pub async fn config(&self) -> Arc<crate::config::Config> {
         self.codex.session.get_config().await
+    }
+
+    /// Resolves the MCP runtime configuration using this thread's extension data.
+    pub async fn runtime_mcp_config(&self, config: &crate::config::Config) -> codex_mcp::McpConfig {
+        self.codex.session.runtime_mcp_config(config).await
     }
 
     pub fn multi_agent_version(&self) -> Option<MultiAgentVersion> {

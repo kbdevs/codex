@@ -75,13 +75,13 @@ impl App {
     fn resolve_import_path(&self, raw_path: &str) -> Result<PathBuf, String> {
         let raw_path = raw_path.trim();
         if raw_path.is_empty() {
-            return Err("Usage: /import <path>".to_string());
+            return Err("Usage: /import-md <path>".to_string());
         }
 
         let path = match shlex::split(raw_path) {
             Some(parts) if parts.len() == 1 => PathBuf::from(&parts[0]),
             Some(parts) if parts.len() > 1 => {
-                return Err("Usage: /import <path>".to_string());
+                return Err("Usage: /import-md <path>".to_string());
             }
             _ => PathBuf::from(raw_path),
         };

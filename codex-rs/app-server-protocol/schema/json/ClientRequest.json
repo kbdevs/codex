@@ -38,6 +38,26 @@
       "oneOf": [
         {
           "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "input_text"
+              ],
+              "title": "InputTextAgentMessageInputContentType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text",
+            "type"
+          ],
+          "title": "InputTextAgentMessageInputContent",
+          "type": "object"
+        },
+        {
+          "properties": {
             "encrypted_content": {
               "type": "string"
             },
@@ -179,6 +199,36 @@
         "loginId"
       ],
       "type": "object"
+    },
+    "CapabilityRootLocation": {
+      "description": "Location used to resolve a selected capability root.",
+      "oneOf": [
+        {
+          "description": "A path owned by an execution environment.",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "environment"
+              ],
+              "title": "EnvironmentCapabilityRootLocationType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "environmentId",
+            "path",
+            "type"
+          ],
+          "title": "EnvironmentCapabilityRootLocation",
+          "type": "object"
+        }
+      ]
     },
     "ClientInfo": {
       "properties": {
@@ -504,6 +554,18 @@
       ],
       "type": "object"
     },
+    "ConsumeAccountRateLimitResetCreditParams": {
+      "properties": {
+        "idempotencyKey": {
+          "description": "Identifies one logical reset attempt. A UUID is recommended; reuse the same value when retrying that attempt.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "idempotencyKey"
+      ],
+      "type": "object"
+    },
     "ContentItem": {
       "oneOf": [
         {
@@ -578,31 +640,109 @@
         }
       ]
     },
-    "DynamicToolSpec": {
-      "properties": {
-        "deferLoading": {
-          "type": "boolean"
-        },
-        "description": {
-          "type": "string"
-        },
-        "inputSchema": true,
-        "name": {
-          "type": "string"
-        },
-        "namespace": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "description",
-        "inputSchema",
-        "name"
+    "ConversationTextRole": {
+      "enum": [
+        "user",
+        "developer"
       ],
-      "type": "object"
+      "type": "string"
+    },
+    "DynamicToolNamespaceTool": {
+      "oneOf": [
+        {
+          "properties": {
+            "deferLoading": {
+              "type": "boolean"
+            },
+            "description": {
+              "type": "string"
+            },
+            "inputSchema": true,
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "function"
+              ],
+              "title": "FunctionDynamicToolNamespaceToolType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "inputSchema",
+            "name",
+            "type"
+          ],
+          "title": "FunctionDynamicToolNamespaceTool",
+          "type": "object"
+        }
+      ]
+    },
+    "DynamicToolSpec": {
+      "oneOf": [
+        {
+          "properties": {
+            "deferLoading": {
+              "type": "boolean"
+            },
+            "description": {
+              "type": "string"
+            },
+            "inputSchema": true,
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "function"
+              ],
+              "title": "FunctionDynamicToolSpecType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "inputSchema",
+            "name",
+            "type"
+          ],
+          "title": "FunctionDynamicToolSpec",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "tools": {
+              "items": {
+                "$ref": "#/definitions/DynamicToolNamespaceTool"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "namespace"
+              ],
+              "title": "NamespaceDynamicToolSpecType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "name",
+            "tools",
+            "type"
+          ],
+          "title": "NamespaceDynamicToolSpec",
+          "type": "object"
+        }
+      ]
     },
     "ExperimentalFeatureEnablementSetParams": {
       "properties": {
@@ -660,7 +800,7 @@
           ]
         },
         "includeHome": {
-          "description": "If true, include detection under the user's home (~/.claude, ~/.codex, etc.).",
+          "description": "If true, include detection under the user's home directory.",
           "type": "boolean"
         }
       },
@@ -673,6 +813,13 @@
             "$ref": "#/definitions/ExternalAgentConfigMigrationItem"
           },
           "type": "array"
+        },
+        "source": {
+          "description": "Source product that produced the migration items. Missing means unspecified.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1162,6 +1309,9 @@
         "clientInfo"
       ],
       "type": "object"
+    },
+    "LegacyAppPathString": {
+      "type": "string"
     },
     "ListMcpServerStatusParams": {
       "properties": {
@@ -1705,7 +1855,8 @@
         "local",
         "vertical",
         "workspace-directory",
-        "shared-with-me"
+        "shared-with-me",
+        "created-by-me-remote"
       ],
       "type": "string"
     },
@@ -1963,6 +2114,20 @@
       ],
       "type": "object"
     },
+    "RealtimeConversationArchitecture": {
+      "enum": [
+        "realtimeapi",
+        "avas"
+      ],
+      "type": "string"
+    },
+    "RealtimeConversationVersion": {
+      "enum": [
+        "v1",
+        "v2"
+      ],
+      "type": "string"
+    },
     "RealtimeOutputModality": {
       "enum": [
         "text",
@@ -2087,6 +2252,22 @@
         }
       ]
     },
+    "RemoteControlDisableParams": {
+      "properties": {
+        "ephemeral": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "RemoteControlEnableParams": {
+      "properties": {
+        "ephemeral": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "RequestId": {
       "anyOf": [
         {
@@ -2114,6 +2295,16 @@
                 "null"
               ],
               "writeOnly": true
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "phase": {
               "anyOf": [
@@ -2155,6 +2346,16 @@
               },
               "type": "array"
             },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "recipient": {
               "type": "string"
             },
@@ -2191,6 +2392,16 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "summary": {
@@ -2234,6 +2445,16 @@
               ],
               "writeOnly": true
             },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "status": {
               "$ref": "#/definitions/LocalShellStatus"
             },
@@ -2267,6 +2488,16 @@
                 "null"
               ],
               "writeOnly": true
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "name": {
               "type": "string"
@@ -2313,6 +2544,16 @@
               ],
               "writeOnly": true
             },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "status": {
               "type": [
                 "string",
@@ -2339,6 +2580,16 @@
           "properties": {
             "call_id": {
               "type": "string"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "output": {
               "$ref": "#/definitions/FunctionCallOutputBody"
@@ -2374,6 +2625,16 @@
             "input": {
               "type": "string"
             },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "name": {
               "type": "string"
             },
@@ -2404,6 +2665,16 @@
           "properties": {
             "call_id": {
               "type": "string"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "name": {
               "type": [
@@ -2440,6 +2711,16 @@
             },
             "execution": {
               "type": "string"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "status": {
               "type": "string"
@@ -2484,6 +2765,16 @@
               ],
               "writeOnly": true
             },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "status": {
               "type": [
                 "string",
@@ -2508,6 +2799,16 @@
           "properties": {
             "id": {
               "type": "string"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "result": {
               "type": "string"
@@ -2543,6 +2844,16 @@
             "encrypted_content": {
               "type": "string"
             },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "type": {
               "enum": [
                 "compaction"
@@ -2560,6 +2871,16 @@
         },
         {
           "properties": {
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "type": {
               "enum": [
                 "compaction_trigger"
@@ -2580,6 +2901,16 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ResponseItemMetadata"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "type": {
@@ -2613,6 +2944,23 @@
           "type": "object"
         }
       ]
+    },
+    "ResponseItemMetadata": {
+      "properties": {
+        "source_call_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
     },
     "ResponsesApiWebSearchAction": {
       "oneOf": [
@@ -2947,6 +3295,28 @@
         }
       ]
     },
+    "SelectedCapabilityRoot": {
+      "description": "A user-selected root that can expose one or more runtime capabilities.",
+      "properties": {
+        "id": {
+          "description": "Stable identifier supplied by the capability selection platform.",
+          "type": "string"
+        },
+        "location": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CapabilityRootLocation"
+            }
+          ],
+          "description": "Where the selected root can be resolved."
+        }
+      },
+      "required": [
+        "id",
+        "location"
+      ],
+      "type": "object"
+    },
     "SendAddCreditsNudgeEmailParams": {
       "properties": {
         "creditType": {
@@ -3134,6 +3504,17 @@
       "type": "object"
     },
     "ThreadCompactStartParams": {
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadDeleteParams": {
       "properties": {
         "threadId": {
           "type": "string"
@@ -3790,16 +4171,12 @@
     "ThreadSortKey": {
       "enum": [
         "created_at",
-        "updated_at"
+        "updated_at",
+        "recency_at"
       ],
       "type": "string"
     },
     "ThreadSource": {
-      "enum": [
-        "user",
-        "subagent",
-        "memory_consolidation"
-      ],
       "type": "string"
     },
     "ThreadSourceKind": {
@@ -3971,7 +4348,7 @@
     "TurnEnvironmentParams": {
       "properties": {
         "cwd": {
-          "$ref": "#/definitions/AbsolutePathBuf"
+          "$ref": "#/definitions/LegacyAppPathString"
         },
         "environmentId": {
           "type": "string"
@@ -4458,6 +4835,30 @@
         "params"
       ],
       "title": "Thread/archiveRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/delete"
+          ],
+          "title": "Thread/deleteRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadDeleteParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/deleteRequest",
       "type": "object"
     },
     {
@@ -5976,6 +6377,30 @@
         },
         "method": {
           "enum": [
+            "account/rateLimitResetCredit/consume"
+          ],
+          "title": "Account/rateLimitResetCredit/consumeRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ConsumeAccountRateLimitResetCreditParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Account/rateLimitResetCredit/consumeRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
             "account/usage/read"
           ],
           "title": "Account/usage/readRequestMethod",
@@ -6210,6 +6635,29 @@
         "params"
       ],
       "title": "ExternalAgentConfig/importRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "externalAgentConfig/import/readHistories"
+          ],
+          "title": "ExternalAgentConfig/import/readHistoriesRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "id",
+        "method"
+      ],
+      "title": "ExternalAgentConfig/import/readHistoriesRequest",
       "type": "object"
     },
     {
