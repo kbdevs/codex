@@ -67,6 +67,8 @@ use crate::protocol::v2::PatchApplyStatus;
 #[cfg(test)]
 use crate::protocol::v2::PatchChangeKind;
 #[cfg(test)]
+use codex_protocol::config_types::ModeKind;
+#[cfg(test)]
 use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 #[cfg(test)]
 use codex_protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
@@ -985,10 +987,17 @@ impl ThreadHistoryBuilder {
         self.finish_current_turn();
 
         let n = usize::try_from(payload.num_turns).unwrap_or(usize::MAX);
-        if n >= self.turns.len() {
+        let user_turn_positions = self
+            .turns
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, turn)| turn_counts_as_user_turn(turn).then_some(idx))
+            .collect::<Vec<_>>();
+        if n >= user_turn_positions.len() {
             self.turns.clear();
         } else {
-            self.turns.truncate(self.turns.len().saturating_sub(n));
+            let cut_idx = user_turn_positions[user_turn_positions.len() - n];
+            self.turns.truncate(cut_idx);
         }
 
         let item_count: usize = self.turns.iter().map(|t| t.items.len()).sum();
@@ -1098,6 +1107,12 @@ impl ThreadHistoryBuilder {
         }
         content
     }
+}
+
+fn turn_counts_as_user_turn(turn: &Turn) -> bool {
+    turn.items
+        .iter()
+        .any(|item| matches!(item, ThreadItem::UserMessage { .. }))
 }
 
 const REVIEW_FALLBACK_MESSAGE: &str = "Reviewer failed to output a response.";
@@ -1889,6 +1904,110 @@ mod tests {
             .collect::<Vec<_>>();
         let turns = build_turns_from_rollout_items(&items);
         assert_eq!(turns, Vec::<Turn>::new());
+    }
+
+    #[test]
+    fn thread_rollback_after_compaction_drops_latest_user_turn_and_compaction() {
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-1".into(),
+                trace_id: None,
+                started_at: None,
+                model_context_window: Some(128_000),
+                collaboration_mode_kind: ModeKind::Default,
+            })),
+            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                client_id: None,
+                message: "First".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+                ..Default::default()
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "A1".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-1".into(),
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "turn-2".into(),
+                trace_id: None,
+                started_at: None,
+                model_context_window: Some(128_000),
+                collaboration_mode_kind: ModeKind::Default,
+            })),
+            RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+                client_id: None,
+                message: "Second".into(),
+                images: None,
+                text_elements: Vec::new(),
+                local_images: Vec::new(),
+                ..Default::default()
+            })),
+            RolloutItem::EventMsg(EventMsg::AgentMessage(AgentMessageEvent {
+                message: "A2".into(),
+                phase: None,
+                memory_citation: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "turn-2".into(),
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_id: "compact-turn".into(),
+                trace_id: None,
+                started_at: None,
+                model_context_window: Some(128_000),
+                collaboration_mode_kind: ModeKind::Default,
+            })),
+            RolloutItem::Compacted(CompactedItem {
+                message: "summary".into(),
+                replacement_history: Some(Vec::new()),
+            }),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                turn_id: "compact-turn".into(),
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            })),
+            RolloutItem::EventMsg(EventMsg::ThreadRolledBack(ThreadRolledBackEvent {
+                num_turns: 1,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].items,
+            vec![
+                ThreadItem::UserMessage {
+                    id: "item-1".into(),
+                    client_id: None,
+                    content: vec![UserInput::Text {
+                        text: "First".into(),
+                        text_elements: Vec::new(),
+                    }],
+                },
+                ThreadItem::AgentMessage {
+                    id: "item-2".into(),
+                    text: "A1".into(),
+                    phase: None,
+                    memory_citation: None,
+                },
+            ]
+        );
     }
 
     #[test]
