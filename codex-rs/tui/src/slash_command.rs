@@ -199,15 +199,11 @@ impl SlashCommand {
             SlashCommand::New
             | SlashCommand::Archive
             | SlashCommand::Delete
-            | SlashCommand::Resume
             | SlashCommand::Fork
             | SlashCommand::Undo
             | SlashCommand::ImportMarkdown
             | SlashCommand::Init
             | SlashCommand::Compact
-            | SlashCommand::Model
-            | SlashCommand::Personality
-            | SlashCommand::Permissions
             | SlashCommand::Keymap
             | SlashCommand::Vim
             | SlashCommand::ElevateSandbox
@@ -223,6 +219,10 @@ impl SlashCommand {
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
             | SlashCommand::Export
+            | SlashCommand::Resume
+            | SlashCommand::Model
+            | SlashCommand::Personality
+            | SlashCommand::Permissions
             | SlashCommand::Copy
             | SlashCommand::Raw
             | SlashCommand::Rename

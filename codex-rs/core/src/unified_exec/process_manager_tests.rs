@@ -98,6 +98,7 @@ fn exec_server_params_use_path_uri_and_env_policy_overlay_contract() {
             ]),
         }),
         network: None,
+        network_environment_id: None,
         expiration: crate::exec::ExecExpiration::DefaultTimeout,
         capture_policy: crate::exec::ExecCapturePolicy::ShellTool,
         sandbox: codex_sandboxing::SandboxType::None,
@@ -110,6 +111,8 @@ fn exec_server_params_use_path_uri_and_env_policy_overlay_contract() {
         network_sandbox_policy,
         windows_sandbox_filesystem_overrides: None,
         arg0: None,
+        exec_server_sandbox: None,
+        exec_server_enforce_managed_network: false,
     };
 
     let params =

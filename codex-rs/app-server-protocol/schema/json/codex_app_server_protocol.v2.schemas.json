@@ -4992,7 +4992,8 @@
     "ConversationTextRole": {
       "enum": [
         "user",
-        "developer"
+        "developer",
+        "assistant"
       ],
       "type": "string"
     },
@@ -7439,6 +7440,10 @@
           "description": "Opt into receiving experimental API methods and fields.",
           "type": "boolean"
         },
+        "mcpServerOpenaiFormElicitation": {
+          "description": "Allow downstream MCP servers to request OpenAI extended form elicitations.",
+          "type": "boolean"
+        },
         "optOutNotificationMethods": {
           "description": "Exact notification method names that should be suppressed for this connection (for example `thread/started`).",
           "items": {
@@ -8538,6 +8543,29 @@
       "title": "McpServerToolCallResponse",
       "type": "object"
     },
+    "McpToolCallAppContext": {
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "linkId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resourceUri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "connectorId"
+      ],
+      "type": "object"
+    },
     "McpToolCallError": {
       "properties": {
         "message": {
@@ -9032,6 +9060,14 @@
       ],
       "title": "ModelVerificationNotification",
       "type": "object"
+    },
+    "MultiAgentMode": {
+      "description": "Controls whether the model should only spawn sub-agents after an explicit user request or may delegate proactively when doing so would help.",
+      "enum": [
+        "explicitRequestOnly",
+        "proactive"
+      ],
+      "type": "string"
     },
     "NetworkAccess": {
       "enum": [
@@ -10726,13 +10762,6 @@
       "title": "RawResponseItemCompletedNotification",
       "type": "object"
     },
-    "RealtimeConversationArchitecture": {
-      "enum": [
-        "realtimeapi",
-        "avas"
-      ],
-      "type": "string"
-    },
     "RealtimeConversationVersion": {
       "enum": [
         "v1",
@@ -11240,8 +11269,7 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11293,6 +11321,12 @@
               },
               "type": "array"
             },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "metadata": {
               "anyOf": [
                 {
@@ -11336,6 +11370,12 @@
               ]
             },
             "encrypted_content": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
               "type": [
                 "string",
                 "null"
@@ -11389,8 +11429,7 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11433,8 +11472,7 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11488,8 +11526,7 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11527,6 +11564,12 @@
           "properties": {
             "call_id": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11566,8 +11609,7 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
             },
             "input": {
               "type": "string"
@@ -11612,6 +11654,12 @@
           "properties": {
             "call_id": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11658,6 +11706,12 @@
             },
             "execution": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11709,8 +11763,7 @@
               "type": [
                 "string",
                 "null"
-              ],
-              "writeOnly": true
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11745,7 +11798,10 @@
         {
           "properties": {
             "id": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11778,7 +11834,6 @@
             }
           },
           "required": [
-            "id",
             "result",
             "status",
             "type"
@@ -11790,6 +11845,12 @@
           "properties": {
             "encrypted_content": {
               "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "metadata": {
               "anyOf": [
@@ -11845,6 +11906,12 @@
         {
           "properties": {
             "encrypted_content": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
               "type": [
                 "string",
                 "null"
@@ -14764,9 +14831,9 @@
         },
         "instructionSources": {
           "default": [],
-          "description": "Instruction source files currently loaded for this thread.",
+          "description": "Environment-native paths to instruction source files currently loaded for this thread.",
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           },
           "type": "array"
         },
@@ -15231,7 +15298,7 @@
             "cwd": {
               "allOf": [
                 {
-                  "$ref": "#/definitions/AbsolutePathBuf"
+                  "$ref": "#/definitions/LegacyAppPathString"
                 }
               ],
               "description": "The command's working directory."
@@ -15325,6 +15392,16 @@
         },
         {
           "properties": {
+            "appContext": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/McpToolCallAppContext"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "arguments": true,
             "durationMs": {
               "description": "The duration of the MCP tool call in milliseconds.",
@@ -15348,6 +15425,7 @@
               "type": "string"
             },
             "mcpAppResourceUri": {
+              "description": "Deprecated: use `appContext.resourceUri` instead.",
               "type": [
                 "string",
                 "null"
@@ -16468,9 +16546,9 @@
         },
         "instructionSources": {
           "default": [],
-          "description": "Instruction source files currently loaded for this thread.",
+          "description": "Environment-native paths to instruction source files currently loaded for this thread.",
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           },
           "type": "array"
         },
@@ -16885,9 +16963,9 @@
         },
         "instructionSources": {
           "default": [],
-          "description": "Instruction source files currently loaded for this thread.",
+          "description": "Environment-native paths to instruction source files currently loaded for this thread.",
           "items": {
-            "$ref": "#/definitions/AbsolutePathBuf"
+            "$ref": "#/definitions/LegacyAppPathString"
           },
           "type": "array"
         },
@@ -18056,6 +18134,7 @@
       "enum": [
         "disabled",
         "cached",
+        "indexed",
         "live"
       ],
       "type": "string"

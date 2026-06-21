@@ -4699,7 +4699,7 @@ fn exec_approval_request(
             reason: Some("needs approval".to_string()),
             network_approval_context: None,
             command: Some("echo hello".to_string()),
-            cwd: Some(test_path_buf("/tmp/project").abs()),
+            cwd: Some(test_path_buf("/tmp/project").abs().into()),
             command_actions: None,
             additional_permissions: None,
             proposed_execpolicy_amendment: None,
@@ -6154,6 +6154,7 @@ async fn inactive_thread_settings_notification_updates_cached_collaboration_mode
             effort: collaboration_mode.settings.reasoning_effort.clone(),
             summary: None,
             collaboration_mode: collaboration_mode.clone(),
+            multi_agent_mode: Default::default(),
             personality: Some(Personality::Pragmatic),
         },
     };

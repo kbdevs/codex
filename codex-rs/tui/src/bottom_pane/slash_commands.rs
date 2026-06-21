@@ -48,7 +48,7 @@ impl SlashCommandItem {
     pub(crate) fn available_during_task(&self) -> bool {
         match self {
             Self::Builtin(cmd) => cmd.available_during_task(),
-            Self::ServiceTier(_) => false,
+            Self::ServiceTier(_) => true,
         }
     }
 }
@@ -303,6 +303,7 @@ mod tests {
             commands,
             vec![
                 SlashCommand::Ide,
+                SlashCommand::Export,
                 SlashCommand::Copy,
                 SlashCommand::Raw,
                 SlashCommand::Diff,
