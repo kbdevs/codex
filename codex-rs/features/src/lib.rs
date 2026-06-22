@@ -145,7 +145,7 @@ pub enum Feature {
     Collab,
     /// Enable task-path-based multi-agent routing.
     MultiAgentV2,
-    /// Enable per-turn multi-agent mode selection.
+    /// Removed compatibility flag retained as a no-op.
     MultiAgentMode,
     /// Enable CSV-backed agent job tools.
     SpawnCsv,
@@ -175,6 +175,10 @@ pub enum Feature {
     ///
     /// Requirements-only gate: this should be set from requirements, not user config.
     BrowserUse,
+    /// Allow Browser Use integration to access the full Chrome DevTools Protocol surface.
+    ///
+    /// Requirements-only gate: this should be set from requirements, not user config.
+    BrowserUseFullCdpAccess,
     /// Allow Browser Use integration with external browsers.
     ///
     /// Requirements-only gate: this should be set from requirements, not user config.
@@ -193,7 +197,7 @@ pub enum Feature {
     ImageGeneration,
     /// Replace hosted image generation with the standalone image-generation extension.
     ImageGenExt,
-    /// Resize all inline data-URL images before recording them in history.
+    /// Removed compatibility flag for always-on centralized image preparation.
     ResizeAllImages,
     /// Generate Responses API item IDs for client-created history items.
     ItemIds,
@@ -231,6 +235,8 @@ pub enum Feature {
     RealtimeConversation,
     /// Prevent idle system sleep while a turn is actively running.
     PreventIdleSleep,
+    /// Enable automatic context compaction before or during a turn.
+    AutoCompaction,
     /// Enable remote compaction v2 over the normal Responses API.
     RemoteCompactionV2,
     /// Use Agent Identity for ChatGPT-authenticated sessions.
@@ -470,7 +476,7 @@ impl Features {
                 "tool_search" | "apps_mcp_path_override" => {
                     continue;
                 }
-                "image_detail_original" => {
+                "image_detail_original" | "resize_all_images" => {
                     continue;
                 }
                 "plugin_hooks" => {
@@ -1032,7 +1038,7 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::MultiAgentMode,
         key: "multi_agent_mode",
-        stage: Stage::UnderDevelopment,
+        stage: Stage::Removed,
         default_enabled: false,
     },
     FeatureSpec {
@@ -1114,6 +1120,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         default_enabled: true,
     },
     FeatureSpec {
+        id: Feature::BrowserUseFullCdpAccess,
+        key: "browser_use_full_cdp_access",
+        stage: Stage::Stable,
+        default_enabled: true,
+    },
+    FeatureSpec {
         id: Feature::BrowserUseExternal,
         key: "browser_use_external",
         stage: Stage::Stable,
@@ -1158,8 +1170,8 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ResizeAllImages,
         key: "resize_all_images",
-        stage: Stage::UnderDevelopment,
-        default_enabled: false,
+        stage: Stage::Removed,
+        default_enabled: true,
     },
     FeatureSpec {
         id: Feature::ItemIds,
@@ -1334,6 +1346,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "responses_websockets_v2",
         stage: Stage::Removed,
         default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::AutoCompaction,
+        key: "auto_compaction",
+        stage: Stage::Stable,
+        default_enabled: true,
     },
     FeatureSpec {
         id: Feature::RemoteCompactionV2,
