@@ -956,6 +956,7 @@ impl ChatWidget {
 
     fn restore_retry_status_header_if_present(&mut self) {
         if let Some(header) = self.status_state.take_retry_status_header() {
+            self.bottom_pane.reset_active_agent_timer();
             self.set_status_header(header);
         }
     }

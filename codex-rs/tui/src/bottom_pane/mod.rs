@@ -1004,6 +1004,7 @@ impl BottomPane {
                 if let Some(status) = self.status.as_mut() {
                     status.set_interrupt_hint_visible(/*visible*/ true);
                     status.set_interrupt_binding(primary_binding(&self.keymap.chat.interrupt_turn));
+                    status.reset_active_agent_timer();
                 }
                 self.sync_status_inline_message();
                 self.request_redraw();
@@ -1043,6 +1044,13 @@ impl BottomPane {
     pub(crate) fn set_interrupt_hint_visible(&mut self, visible: bool) {
         if let Some(status) = self.status.as_mut() {
             status.set_interrupt_hint_visible(visible);
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn reset_active_agent_timer(&mut self) {
+        if let Some(status) = self.status.as_mut() {
+            status.reset_active_agent_timer();
             self.request_redraw();
         }
     }

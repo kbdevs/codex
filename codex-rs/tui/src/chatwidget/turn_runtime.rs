@@ -60,6 +60,7 @@ impl ChatWidget {
         self.quit_shortcut_expires_at = None;
         self.quit_shortcut_key = None;
         self.update_task_running_state();
+        self.bottom_pane.reset_active_agent_timer();
         self.status_state.retry_status_header = None;
         self.clear_active_hook_cell();
         self.status_state.pending_status_indicator_restore = false;

@@ -54,6 +54,8 @@ pub(crate) struct StatusIndicatorWidget {
 
     elapsed_running: Duration,
     last_resume_at: Instant,
+    active_agent_elapsed_running: Duration,
+    active_agent_last_resume_at: Instant,
     is_paused: bool,
     app_event_tx: AppEventSender,
     frame_requester: FrameRequester,
@@ -92,6 +94,8 @@ impl StatusIndicatorWidget {
             interrupt_binding: Some(key_hint::plain(KeyCode::Esc)),
             elapsed_running: Duration::ZERO,
             last_resume_at: Instant::now(),
+            active_agent_elapsed_running: Duration::ZERO,
+            active_agent_last_resume_at: Instant::now(),
             is_paused: false,
 
             app_event_tx,
@@ -171,6 +175,8 @@ impl StatusIndicatorWidget {
             return;
         }
         self.elapsed_running += now.saturating_duration_since(self.last_resume_at);
+        self.active_agent_elapsed_running +=
+            now.saturating_duration_since(self.active_agent_last_resume_at);
         self.is_paused = true;
     }
 
@@ -179,6 +185,7 @@ impl StatusIndicatorWidget {
             return;
         }
         self.last_resume_at = now;
+        self.active_agent_last_resume_at = now;
         self.is_paused = false;
         self.frame_requester.schedule_frame();
     }
@@ -187,6 +194,24 @@ impl StatusIndicatorWidget {
         let mut elapsed = self.elapsed_running;
         if !self.is_paused {
             elapsed += now.saturating_duration_since(self.last_resume_at);
+        }
+        elapsed
+    }
+
+    pub(crate) fn reset_active_agent_timer(&mut self) {
+        self.reset_active_agent_timer_at(Instant::now());
+    }
+
+    pub(crate) fn reset_active_agent_timer_at(&mut self, now: Instant) {
+        self.active_agent_elapsed_running = Duration::ZERO;
+        self.active_agent_last_resume_at = now;
+        self.frame_requester.schedule_frame();
+    }
+
+    fn active_agent_elapsed_duration_at(&self, now: Instant) -> Duration {
+        let mut elapsed = self.active_agent_elapsed_running;
+        if !self.is_paused {
+            elapsed += now.saturating_duration_since(self.active_agent_last_resume_at);
         }
         elapsed
     }
@@ -249,7 +274,10 @@ impl Renderable for StatusIndicatorWidget {
         }
         let now = Instant::now();
         let elapsed_duration = self.elapsed_duration_at(now);
+        let active_agent_elapsed_duration = self.active_agent_elapsed_duration_at(now);
         let pretty_elapsed = fmt_elapsed_compact(elapsed_duration.as_secs());
+        let pretty_active_agent_elapsed =
+            fmt_elapsed_compact(active_agent_elapsed_duration.as_secs());
         let motion_mode = MotionMode::from_animations_enabled(self.animations_enabled);
 
         let mut spans = Vec::with_capacity(5);
@@ -269,12 +297,12 @@ impl Renderable for StatusIndicatorWidget {
             && let Some(interrupt_binding) = self.interrupt_binding
         {
             spans.extend(vec![
-                format!("({pretty_elapsed} • ").dim(),
+                format!("({pretty_active_agent_elapsed} / {pretty_elapsed} • ").dim(),
                 interrupt_binding.into(),
                 " to interrupt)".dim(),
             ]);
         } else {
-            spans.push(format!("({pretty_elapsed})").dim());
+            spans.push(format!("({pretty_active_agent_elapsed} / {pretty_elapsed})").dim());
         }
         if let Some(message) = &self.inline_message {
             // Keep optional context after elapsed/interrupt text so that core
@@ -412,7 +440,7 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect::<String>();
 
-        assert!(line.starts_with("Working (0s • esc to interrupt)"));
+        assert!(line.starts_with("Working (0s / 0s • esc to interrupt)"));
     }
 
     #[test]
@@ -436,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn timer_pauses_when_requested() {
+    fn timers_pause_when_requested() {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut widget = StatusIndicatorWidget::new(
@@ -450,14 +478,60 @@ mod tests {
 
         let before_pause = widget.elapsed_seconds_at(baseline + Duration::from_secs(5));
         assert_eq!(before_pause, 5);
+        assert_eq!(
+            widget
+                .active_agent_elapsed_duration_at(baseline + Duration::from_secs(5))
+                .as_secs(),
+            5
+        );
 
         widget.pause_timer_at(baseline + Duration::from_secs(5));
         let paused_elapsed = widget.elapsed_seconds_at(baseline + Duration::from_secs(10));
         assert_eq!(paused_elapsed, before_pause);
+        assert_eq!(
+            widget
+                .active_agent_elapsed_duration_at(baseline + Duration::from_secs(10))
+                .as_secs(),
+            before_pause
+        );
 
         widget.resume_timer_at(baseline + Duration::from_secs(10));
         let after_resume = widget.elapsed_seconds_at(baseline + Duration::from_secs(13));
         assert_eq!(after_resume, before_pause + 3);
+        assert_eq!(
+            widget
+                .active_agent_elapsed_duration_at(baseline + Duration::from_secs(13))
+                .as_secs(),
+            before_pause + 3
+        );
+    }
+
+    #[test]
+    fn active_agent_timer_resets_without_resetting_total_timer() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut widget = StatusIndicatorWidget::new(
+            tx,
+            crate::tui::FrameRequester::test_dummy(),
+            /*animations_enabled*/ true,
+        );
+
+        let baseline = Instant::now();
+        widget.last_resume_at = baseline;
+        widget.active_agent_last_resume_at = baseline;
+
+        widget.reset_active_agent_timer_at(baseline + Duration::from_secs(7));
+
+        assert_eq!(
+            widget
+                .active_agent_elapsed_duration_at(baseline + Duration::from_secs(12))
+                .as_secs(),
+            5
+        );
+        assert_eq!(
+            widget.elapsed_seconds_at(baseline + Duration::from_secs(12)),
+            12
+        );
     }
 
     #[test]
