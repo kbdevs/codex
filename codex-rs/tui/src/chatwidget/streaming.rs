@@ -389,6 +389,8 @@ impl ChatWidget {
         if !delta.is_empty() {
             self.record_visible_turn_activity();
             self.mark_safety_buffering_agent_message_started();
+            self.live_tps_meter.record_delta(&delta, Instant::now());
+            self.refresh_tps_status_line_if_configured();
         }
         if self.stream_controller.is_none() {
             // Before starting an agent stream, flush any active exec cell group.

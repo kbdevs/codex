@@ -184,7 +184,7 @@ fn session_telemetry_for_request(
             .reasoning
             .as_ref()
             .and_then(|reasoning| reasoning.effort.as_ref()),
-        )
+    )
 }
 
 /// Session-scoped state shared by all [`ModelClient`] clones.

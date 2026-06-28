@@ -202,6 +202,18 @@ impl ChatWidget {
         self.set_status_line_hyperlink(hyperlink_url);
     }
 
+    fn refresh_status_line_values_only(&mut self) {
+        let (status_line_items, invalid_status_line_items) = self.status_line_items_with_invalids();
+        self.warn_invalid_status_line_items_once(&invalid_status_line_items);
+        let selections = StatusSurfaceSelections {
+            status_line_items,
+            invalid_status_line_items,
+            terminal_title_items: Vec::new(),
+            invalid_terminal_title_items: Vec::new(),
+        };
+        self.refresh_status_line_from_selections(&selections);
+    }
+
     /// Clears the terminal title Codex most recently wrote, if any.
     ///
     /// This does not attempt to restore the shell or terminal's previous title;
@@ -411,6 +423,16 @@ impl ChatWidget {
                 .map(ToString::to_string)
                 .collect()
         })
+    }
+
+    pub(super) fn configured_status_line_uses(&self, item: StatusLineItem) -> bool {
+        self.status_line_items_with_invalids().0.contains(&item)
+    }
+
+    pub(super) fn refresh_tps_status_line_if_configured(&mut self) {
+        if self.configured_status_line_uses(StatusLineItem::TokensPerSecond) {
+            self.refresh_status_line_values_only();
+        }
     }
 
     /// Parses configured terminal-title ids into known items and collects unknown ids.
@@ -719,6 +741,11 @@ impl ChatWidget {
             StatusLineItem::ContextWindowSize => self
                 .status_line_context_window_size()
                 .map(|cws| format!("{} window", format_tokens_compact(cws))),
+            StatusLineItem::TokensPerSecond => self
+                .turn_lifecycle
+                .agent_turn_running
+                .then(|| self.live_tps_meter.display(Instant::now()))
+                .flatten(),
             StatusLineItem::TotalInputTokens => Some(format!(
                 "{} in",
                 format_tokens_compact(self.status_line_total_usage().input_tokens)
@@ -782,6 +809,7 @@ impl ChatWidget {
             StatusSurfacePreviewItem::WeeklyLimit => StatusLineItem::WeeklyLimit,
             StatusSurfacePreviewItem::CodexVersion => StatusLineItem::CodexVersion,
             StatusSurfacePreviewItem::ContextWindowSize => StatusLineItem::ContextWindowSize,
+            StatusSurfacePreviewItem::TokensPerSecond => StatusLineItem::TokensPerSecond,
             StatusSurfacePreviewItem::UsedTokens => StatusLineItem::UsedTokens,
             StatusSurfacePreviewItem::TotalInputTokens => StatusLineItem::TotalInputTokens,
             StatusSurfacePreviewItem::TotalOutputTokens => StatusLineItem::TotalOutputTokens,

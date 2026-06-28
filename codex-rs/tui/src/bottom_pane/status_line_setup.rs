@@ -115,6 +115,10 @@ pub(crate) enum StatusLineItem {
     /// Total context window size in tokens.
     ContextWindowSize,
 
+    /// Estimated live output tokens per second while an answer streams.
+    #[strum(to_string = "tps", serialize = "tokens-per-second")]
+    TokensPerSecond,
+
     /// Total tokens used in the current session.
     UsedTokens,
 
@@ -179,6 +183,9 @@ impl StatusLineItem {
             StatusLineItem::ContextWindowSize => {
                 "Total context window size in tokens (omitted when unknown)"
             }
+            StatusLineItem::TokensPerSecond => {
+                "Estimated live output tokens per second (omitted when idle)"
+            }
             StatusLineItem::UsedTokens => "Total tokens used in session (omitted when zero)",
             StatusLineItem::TotalInputTokens => "Total input tokens used in session",
             StatusLineItem::TotalOutputTokens => "Total output tokens used in session",
@@ -216,6 +223,7 @@ impl StatusLineItem {
             StatusLineItem::WeeklyLimit => StatusSurfacePreviewItem::WeeklyLimit,
             StatusLineItem::CodexVersion => StatusSurfacePreviewItem::CodexVersion,
             StatusLineItem::ContextWindowSize => StatusSurfacePreviewItem::ContextWindowSize,
+            StatusLineItem::TokensPerSecond => StatusSurfacePreviewItem::TokensPerSecond,
             StatusLineItem::UsedTokens => StatusSurfacePreviewItem::UsedTokens,
             StatusLineItem::TotalInputTokens => StatusSurfacePreviewItem::TotalInputTokens,
             StatusLineItem::TotalOutputTokens => StatusSurfacePreviewItem::TotalOutputTokens,
@@ -493,6 +501,19 @@ mod tests {
         assert_eq!(
             "branch-changes".parse::<StatusLineItem>(),
             Ok(StatusLineItem::BranchChanges)
+        );
+    }
+
+    #[test]
+    fn tps_is_canonical_and_accepts_verbose_id() {
+        assert_eq!(StatusLineItem::TokensPerSecond.to_string(), "tps");
+        assert_eq!(
+            "tps".parse::<StatusLineItem>(),
+            Ok(StatusLineItem::TokensPerSecond)
+        );
+        assert_eq!(
+            "tokens-per-second".parse::<StatusLineItem>(),
+            Ok(StatusLineItem::TokensPerSecond)
         );
     }
 

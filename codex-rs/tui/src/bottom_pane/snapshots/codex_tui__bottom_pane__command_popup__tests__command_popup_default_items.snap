@@ -20,6 +20,9 @@ expression: commands
 /delete - permanently delete this session and exit
 /resume - resume a saved chat
 /fork - fork the current chat
+/undo - roll back the latest user turn
+/export - export the current chat as markdown
+/import-md - import a markdown chat export: /import-md <path>
 /app - continue this session in Codex Desktop
 /init - create an AGENTS.md file with instructions for Codex
 /compact - summarize conversation to prevent hitting the context limit

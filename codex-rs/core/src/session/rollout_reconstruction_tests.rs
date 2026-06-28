@@ -733,6 +733,100 @@ async fn reconstruct_history_rollback_counts_inter_agent_assistant_turns() {
 }
 
 #[tokio::test]
+async fn reconstruct_history_rollback_counts_typed_inter_agent_metadata_turns() {
+    let (session, turn_context) = make_session_and_context().await;
+    let first_context_item = turn_context.to_turn_context_item();
+    let first_turn_id = first_context_item
+        .turn_id
+        .clone()
+        .expect("turn context should have turn_id");
+    let assistant_turn_id = "typed-assistant-instruction-turn".to_string();
+    let assistant_turn_context = TurnContextItem {
+        turn_id: Some(assistant_turn_id.clone()),
+        ..first_context_item.clone()
+    };
+    let communication = InterAgentCommunication::new(
+        AgentPath::root().join("worker").expect("worker path"),
+        AgentPath::root(),
+        Vec::new(),
+        "typed worker reply".to_string(),
+        /*trigger_turn*/ false,
+    );
+
+    let rollout_items = vec![
+        RolloutItem::EventMsg(EventMsg::TurnStarted(
+            codex_protocol::protocol::TurnStartedEvent {
+                turn_id: first_turn_id.clone(),
+                trace_id: None,
+                started_at: None,
+                model_context_window: Some(128_000),
+                collaboration_mode_kind: ModeKind::Default,
+            },
+        )),
+        RolloutItem::EventMsg(EventMsg::UserMessage(
+            codex_protocol::protocol::UserMessageEvent {
+                client_id: None,
+                message: "turn 1 user".to_string(),
+                images: None,
+                local_images: Vec::new(),
+                text_elements: Vec::new(),
+                ..Default::default()
+            },
+        )),
+        RolloutItem::TurnContext(first_context_item.clone()),
+        RolloutItem::ResponseItem(user_message("turn 1 user")),
+        RolloutItem::ResponseItem(assistant_message("turn 1 assistant")),
+        RolloutItem::EventMsg(EventMsg::TurnComplete(
+            codex_protocol::protocol::TurnCompleteEvent {
+                turn_id: first_turn_id,
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            },
+        )),
+        RolloutItem::EventMsg(EventMsg::TurnStarted(
+            codex_protocol::protocol::TurnStartedEvent {
+                turn_id: assistant_turn_id.clone(),
+                trace_id: None,
+                started_at: None,
+                model_context_window: Some(128_000),
+                collaboration_mode_kind: ModeKind::Default,
+            },
+        )),
+        RolloutItem::TurnContext(assistant_turn_context),
+        RolloutItem::InterAgentCommunicationMetadata {
+            trigger_turn: communication.trigger_turn,
+        },
+        RolloutItem::ResponseItem(communication.to_model_input_item()),
+        RolloutItem::EventMsg(EventMsg::TurnComplete(
+            codex_protocol::protocol::TurnCompleteEvent {
+                turn_id: assistant_turn_id,
+                last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            },
+        )),
+        RolloutItem::EventMsg(EventMsg::ThreadRolledBack(
+            codex_protocol::protocol::ThreadRolledBackEvent { num_turns: 1 },
+        )),
+    ];
+
+    let reconstructed = session
+        .reconstruct_history_from_rollout(&turn_context, &rollout_items)
+        .await;
+
+    assert_eq!(
+        reconstructed.history,
+        vec![
+            user_message("turn 1 user"),
+            assistant_message("turn 1 assistant")
+        ]
+    );
+}
+
+#[tokio::test]
 async fn reconstruct_history_rollback_clears_history_and_metadata_when_exceeding_user_turns() {
     let (session, turn_context) = make_session_and_context().await;
     let only_context_item = turn_context.to_turn_context_item();

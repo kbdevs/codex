@@ -195,6 +195,32 @@ async fn raw_output_status_line_value_only_shows_when_enabled() {
 }
 
 #[tokio::test]
+async fn status_line_tps_updates_while_streaming_and_hides_when_idle() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.tui_status_line = Some(vec![
+        crate::bottom_pane::StatusLineItem::TokensPerSecond.to_string(),
+    ]);
+
+    chat.refresh_status_line();
+    assert_eq!(status_line_text(&chat), None);
+
+    chat.on_task_started();
+    handle_agent_message_delta(&mut chat, "12345678901234567890");
+
+    let value = status_line_text(&chat).expect("expected live TPS value while streaming");
+    assert!(
+        value.ends_with(" tps"),
+        "expected status line TPS value, got {value:?}"
+    );
+
+    chat.on_task_complete(
+        /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
+    );
+
+    assert_eq!(status_line_text(&chat), None);
+}
+
+#[tokio::test]
 async fn status_line_branch_changes_render_no_changes() {
     let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.status_line_git_summary = Some(StatusLineGitSummary {

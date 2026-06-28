@@ -55,6 +55,7 @@ impl ChatWidget {
         self.turn_lifecycle.start(Instant::now());
         self.transcript.reset_turn_flags();
         self.adaptive_chunking.reset();
+        self.live_tps_meter.reset();
         if self.plan_stream_controller.take().is_some() {
             self.request_pending_usage_output_insertion_after_stream_shutdown();
         }
@@ -170,6 +171,7 @@ impl ChatWidget {
         self.status_state.pending_status_indicator_restore = false;
         self.input_queue.user_turn_pending_start = false;
         self.clear_active_hook_cell();
+        self.live_tps_meter.reset();
         self.turn_lifecycle.finish();
         self.update_task_running_state();
         self.running_commands.clear();
@@ -312,6 +314,7 @@ impl ChatWidget {
         // do not leave an orphaned running row behind if no matching completion
         // event arrived before cancellation.
         self.clear_active_hook_cell();
+        self.live_tps_meter.reset();
         // Reset running state and clear streaming buffers.
         self.input_queue.user_turn_pending_start = false;
         self.turn_lifecycle.finish();
