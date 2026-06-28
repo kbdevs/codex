@@ -330,10 +330,57 @@ impl ChatWidget {
         notification: ItemCompletedNotification,
         replay_kind: Option<ReplayKind>,
     ) {
+        let starts_next_agent_cycle =
+            replay_kind.is_none() && completed_item_starts_next_agent_cycle(&notification.item);
         self.handle_thread_item(
             notification.item,
             notification.turn_id,
             replay_kind.map_or(ThreadItemRenderSource::Live, ThreadItemRenderSource::Replay),
         );
+        if starts_next_agent_cycle {
+            self.bottom_pane.reset_active_agent_timer();
+        }
     }
 }
+
+pub(super) fn completed_item_starts_next_agent_cycle(item: &ThreadItem) -> bool {
+    match item {
+        ThreadItem::CommandExecution { status, .. } => !matches!(
+            status,
+            codex_app_server_protocol::CommandExecutionStatus::InProgress
+        ),
+        ThreadItem::FileChange { status, .. } => !matches!(
+            status,
+            codex_app_server_protocol::PatchApplyStatus::InProgress
+        ),
+        ThreadItem::McpToolCall { status, .. } => !matches!(
+            status,
+            codex_app_server_protocol::McpToolCallStatus::InProgress
+        ),
+        ThreadItem::DynamicToolCall { status, .. } => !matches!(
+            status,
+            codex_app_server_protocol::DynamicToolCallStatus::InProgress
+        ),
+        ThreadItem::CollabAgentToolCall { status, .. } => !matches!(
+            status,
+            codex_app_server_protocol::CollabAgentToolCallStatus::InProgress
+        ),
+        ThreadItem::WebSearch { .. }
+        | ThreadItem::Sleep { .. }
+        | ThreadItem::ImageGeneration { .. } => true,
+        ThreadItem::UserMessage { .. }
+        | ThreadItem::HookPrompt { .. }
+        | ThreadItem::AgentMessage { .. }
+        | ThreadItem::Plan { .. }
+        | ThreadItem::Reasoning { .. }
+        | ThreadItem::SubAgentActivity { .. }
+        | ThreadItem::ImageView { .. }
+        | ThreadItem::EnteredReviewMode { .. }
+        | ThreadItem::ExitedReviewMode { .. }
+        | ThreadItem::ContextCompaction { .. } => false,
+    }
+}
+
+#[cfg(test)]
+#[path = "protocol_tests.rs"]
+mod tests;
