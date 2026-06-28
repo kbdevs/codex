@@ -275,9 +275,15 @@ impl Renderable for StatusIndicatorWidget {
         let now = Instant::now();
         let elapsed_duration = self.elapsed_duration_at(now);
         let active_agent_elapsed_duration = self.active_agent_elapsed_duration_at(now);
-        let pretty_elapsed = fmt_elapsed_compact(elapsed_duration.as_secs());
-        let pretty_active_agent_elapsed =
-            fmt_elapsed_compact(active_agent_elapsed_duration.as_secs());
+        let elapsed_secs = elapsed_duration.as_secs();
+        let active_agent_elapsed_secs = active_agent_elapsed_duration.as_secs();
+        let pretty_elapsed = fmt_elapsed_compact(elapsed_secs);
+        let pretty_active_agent_elapsed = fmt_elapsed_compact(active_agent_elapsed_secs);
+        let timer_text = if active_agent_elapsed_secs == elapsed_secs {
+            pretty_elapsed
+        } else {
+            format!("{pretty_active_agent_elapsed} / {pretty_elapsed}")
+        };
         let motion_mode = MotionMode::from_animations_enabled(self.animations_enabled);
 
         let mut spans = Vec::with_capacity(5);
@@ -297,12 +303,12 @@ impl Renderable for StatusIndicatorWidget {
             && let Some(interrupt_binding) = self.interrupt_binding
         {
             spans.extend(vec![
-                format!("({pretty_active_agent_elapsed} / {pretty_elapsed} • ").dim(),
+                format!("({timer_text} • ").dim(),
                 interrupt_binding.into(),
                 " to interrupt)".dim(),
             ]);
         } else {
-            spans.push(format!("({pretty_active_agent_elapsed} / {pretty_elapsed})").dim());
+            spans.push(format!("({timer_text})").dim());
         }
         if let Some(message) = &self.inline_message {
             // Keep optional context after elapsed/interrupt text so that core
@@ -440,7 +446,32 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect::<String>();
 
-        assert!(line.starts_with("Working (0s / 0s • esc to interrupt)"));
+        assert!(line.starts_with("Working (0s • esc to interrupt)"));
+    }
+
+    #[test]
+    fn renders_split_timers_when_active_agent_differs_from_total() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut w = StatusIndicatorWidget::new(
+            tx,
+            crate::tui::FrameRequester::test_dummy(),
+            /*animations_enabled*/ false,
+        );
+        w.is_paused = true;
+        w.elapsed_running = Duration::from_secs(44);
+        w.active_agent_elapsed_running = Duration::from_secs(12);
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 1)).expect("terminal");
+        terminal
+            .draw(|f| w.render(f.area(), f.buffer_mut()))
+            .expect("draw");
+        let line = terminal.backend().buffer().content()[..80]
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+
+        assert!(line.starts_with("Working (12s / 44s • esc to interrupt)"));
     }
 
     #[test]
