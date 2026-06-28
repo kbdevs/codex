@@ -56,7 +56,7 @@ jobs:
   build:
     needs: tag-check
     name: Build - ${{ matrix.runner }} - ${{ matrix.target }} - ${{ matrix.bundle }}
-    runs-on: ${{ matrix.runs_on || matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     # Release builds can take a long time, so leave some headroom to avoid
     # having to restart the full workflow due to a timeout.
     timeout-minutes: 90
@@ -89,43 +89,6 @@ jobs:
             target: aarch64-apple-darwin
             bundle: app-server
             artifact_name: aarch64-apple-darwin-app-server
-            binaries: "codex-app-server"
-            build_dmg: "false"
-          - runner: macos-15-xlarge
-            target: x86_64-apple-darwin
-            bundle: primary
-            artifact_name: x86_64-apple-darwin
-            binaries: "codex codex-responses-api-proxy"
-            build_dmg: "true"
-          - runner: macos-15-xlarge
-            target: x86_64-apple-darwin
-            bundle: app-server
-            artifact_name: x86_64-apple-darwin-app-server
-            binaries: "codex-app-server"
-            build_dmg: "false"
-          # Release artifacts intentionally ship MUSL-linked Linux binaries.
-          - runner: ${{ github.event.repository.name }}-linux-x64-xl
-            target: x86_64-unknown-linux-musl
-            bundle: primary
-            artifact_name: x86_64-unknown-linux-musl
-            binaries: "codex codex-responses-api-proxy bwrap"
-            build_dmg: "false"
-          - runner: ${{ github.event.repository.name }}-linux-x64-xl
-            target: x86_64-unknown-linux-musl
-            bundle: app-server
-            artifact_name: x86_64-unknown-linux-musl-app-server
-            binaries: "codex-app-server"
-            build_dmg: "false"
-          - runner: ${{ github.event.repository.name }}-linux-arm64
-            target: aarch64-unknown-linux-musl
-            bundle: primary
-            artifact_name: aarch64-unknown-linux-musl
-            binaries: "codex codex-responses-api-proxy bwrap"
-            build_dmg: "false"
-          - runner: ${{ github.event.repository.name }}-linux-arm64
-            target: aarch64-unknown-linux-musl
-            bundle: app-server
-            artifact_name: aarch64-unknown-linux-musl-app-server
             binaries: "codex-app-server"
             build_dmg: "false"
 
@@ -502,14 +465,6 @@ jobs:
             bundle: app-server
             artifact_name: aarch64-apple-darwin-app-server
             binaries: "codex-app-server"
-          - target: x86_64-apple-darwin
-            bundle: primary
-            artifact_name: x86_64-apple-darwin
-            binaries: "codex codex-responses-api-proxy"
-          - target: x86_64-apple-darwin
-            bundle: app-server
-            artifact_name: x86_64-apple-darwin-app-server
-            binaries: "codex-app-server"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -620,16 +575,6 @@ jobs:
           - target: aarch64-apple-darwin
             bundle: app-server
             artifact_name: aarch64-apple-darwin-app-server
-            binaries: "codex-app-server"
-            build_dmg: "false"
-          - target: x86_64-apple-darwin
-            bundle: primary
-            artifact_name: x86_64-apple-darwin
-            binaries: "codex codex-responses-api-proxy"
-            build_dmg: "true"
-          - target: x86_64-apple-darwin
-            bundle: app-server
-            artifact_name: x86_64-apple-darwin-app-server
             binaries: "codex-app-server"
             build_dmg: "false"
 
@@ -813,8 +758,6 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             artifact_name: aarch64-apple-darwin
-          - target: x86_64-apple-darwin
-            artifact_name: x86_64-apple-darwin
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -916,16 +859,6 @@ jobs:
           - target: aarch64-apple-darwin
             bundle: app-server
             artifact_name: aarch64-apple-darwin-app-server
-            binaries: "codex-app-server"
-            verify_dmg: "false"
-          - target: x86_64-apple-darwin
-            bundle: primary
-            artifact_name: x86_64-apple-darwin
-            binaries: "codex codex-responses-api-proxy"
-            verify_dmg: "true"
-          - target: x86_64-apple-darwin
-            bundle: app-server
-            artifact_name: x86_64-apple-darwin-app-server
             binaries: "codex-app-server"
             verify_dmg: "false"
 
@@ -1053,33 +986,17 @@ jobs:
           path: codex-rs/dist/${{ matrix.target }}/*
           if-no-files-found: error
 
-  build-windows:
-    needs: tag-check
-    uses: ./.github/workflows/rust-release-windows.yml
-    secrets: inherit
-
-  argument-comment-lint-release-assets:
-    name: argument-comment-lint release assets
-    needs: tag-check
-    uses: ./.github/workflows/rust-release-argument-comment-lint.yml
-    with:
-      publish: true
-
   release:
     needs:
       - tag-check
       - build
       - finalize-macos
-      - build-windows
-      - argument-comment-lint-release-assets
     if: >-
       ${{
         always() &&
         needs.tag-check.result == 'success' &&
         needs.build.result == 'success' &&
-        needs.finalize-macos.result == 'success' &&
-        needs.build-windows.result == 'success' &&
-        needs.argument-comment-lint-release-assets.result == 'success'
+        needs.finalize-macos.result == 'success'
       }}
     name: release
     runs-on: ubuntu-latest
@@ -1122,13 +1039,13 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
-          pattern: "{aarch64,x86_64}-{apple-darwin{,-app-server},unknown-linux-musl{,-app-server},pc-windows-msvc}"
+          pattern: "aarch64-apple-darwin{,-app-server}"
 
       - name: Download supplemental release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
-          pattern: "{*-symbols,argument-comment-lint-*,python-runtime-wheel-*}"
+          pattern: "{*-symbols,python-runtime-wheel-aarch64-apple-darwin}"
 
       - name: List
         run: ls -R dist/
@@ -1234,6 +1151,7 @@ jobs:
 
   publish-dotslash:
     name: publish-dotslash
+    if: ${{ github.repository == 'disabled/disabled' }}
     needs: release
     runs-on: ubuntu-latest
     permissions:
@@ -1265,6 +1183,7 @@ jobs:
     # Publish to npm for stable releases and alpha pre-releases with numeric suffixes.
     if: >-
       ${{
+        github.repository == 'disabled/disabled' &&
         !cancelled() &&
         needs.release.result == 'success' &&
         needs.release.outputs.should_publish_npm == 'true'
@@ -1457,6 +1376,7 @@ jobs:
     # '-' in the semver string (e.g., 1.2.3-alpha.1).
     if: >-
       ${{
+        github.repository == 'disabled/disabled' &&
         !cancelled() &&
         needs.release.result == 'success' &&
         !contains(needs.release.outputs.version, '-')
