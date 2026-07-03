@@ -173,6 +173,7 @@ impl ChatWidget {
         self.clear_active_hook_cell();
         self.live_tps_meter.reset();
         self.turn_lifecycle.finish();
+        self.clear_safety_buffering();
         self.update_task_running_state();
         self.running_commands.clear();
         self.suppressed_exec_calls.clear();

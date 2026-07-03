@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync:
@@ -26,25 +27,42 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           tag="$(gh release view --repo openai/codex --json tagName -q .tagName)"
           fork_tag="kbdevs-${tag}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "fork_tag=${fork_tag}" >> "$GITHUB_OUTPUT"
           if git rev-parse -q --verify "refs/tags/${fork_tag}" >/dev/null; then
-            echo "already_released=true" >> "$GITHUB_OUTPUT"
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "already_released=false" >> "$GITHUB_OUTPUT"
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          if gh release view "${fork_tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Merge upstream release tag
-        if: steps.upstream.outputs.already_released == 'false'
+        if: steps.upstream.outputs.tag_exists == 'false'
         run: |
+          set -euo pipefail
           git remote add upstream https://github.com/openai/codex.git
           git fetch upstream --tags
           git checkout main
           git merge --no-edit "${{ steps.upstream.outputs.tag }}"
           git push origin main
       - name: Tag fork release
-        if: steps.upstream.outputs.already_released == 'false'
+        if: steps.upstream.outputs.tag_exists == 'false'
         run: |
+          set -euo pipefail
           git tag "${{ steps.upstream.outputs.fork_tag }}"
           git push origin "${{ steps.upstream.outputs.fork_tag }}"
+      - name: Build and publish fork release
+        if: steps.upstream.outputs.release_exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run kbdevs-release.yml \
+            --ref main \
+            -f tag="${{ steps.upstream.outputs.fork_tag }}"

@@ -6,7 +6,11 @@ pub(crate) fn is_newer(latest: &str, current: &str) -> Option<bool> {
 }
 
 pub(crate) fn extract_version_from_latest_tag(latest_tag_name: &str) -> anyhow::Result<String> {
-    latest_tag_name
+    let upstream_tag_name = latest_tag_name
+        .strip_prefix("kbdevs-")
+        .unwrap_or(latest_tag_name);
+
+    upstream_tag_name
         .strip_prefix("rust-v")
         .map(str::to_owned)
         .ok_or_else(|| anyhow::anyhow!("Failed to parse latest tag name '{latest_tag_name}'"))
@@ -33,6 +37,14 @@ mod tests {
     fn extracts_version_from_latest_tag() {
         assert_eq!(
             extract_version_from_latest_tag("rust-v1.5.0").expect("failed to parse version"),
+            "1.5.0"
+        );
+    }
+
+    #[test]
+    fn extracts_version_from_fork_latest_tag() {
+        assert_eq!(
+            extract_version_from_latest_tag("kbdevs-rust-v1.5.0").expect("failed to parse version"),
             "1.5.0"
         );
     }
