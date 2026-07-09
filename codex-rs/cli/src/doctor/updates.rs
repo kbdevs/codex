@@ -133,6 +133,7 @@ fn update_action_label(context: &InstallContext) -> &'static str {
     match &context.method {
         InstallMethod::Npm => "npm install -g @kbdevs/codex",
         InstallMethod::Bun => "bun install -g @kbdevs/codex",
+        InstallMethod::Pnpm => "pnpm add -g @kbdevs/codex",
         InstallMethod::Brew => "brew upgrade --cask codex",
         InstallMethod::Standalone { .. } => "standalone installer",
         InstallMethod::Other => "manual or unknown",
@@ -144,6 +145,7 @@ fn fetch_latest_version(context: &InstallContext) -> Result<String, String> {
         InstallMethod::Brew => fetch_homebrew_cask_version(),
         InstallMethod::Npm
         | InstallMethod::Bun
+        | InstallMethod::Pnpm
         | InstallMethod::Standalone { .. }
         | InstallMethod::Other => fetch_latest_github_release_version(),
     }
@@ -223,6 +225,13 @@ mod tests {
                 package_layout: None,
             }),
             "npm install -g @kbdevs/codex"
+        );
+        assert_eq!(
+            update_action_label(&InstallContext {
+                method: InstallMethod::Pnpm,
+                package_layout: None,
+            }),
+            "pnpm add -g @kbdevs/codex"
         );
         assert_eq!(
             update_action_label(&InstallContext {
