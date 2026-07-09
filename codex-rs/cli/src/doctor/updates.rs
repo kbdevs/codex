@@ -158,11 +158,15 @@ fn fetch_latest_github_release_version() -> Result<String, String> {
     }
 
     let info = http_get_json::<ReleaseInfo>(GITHUB_LATEST_RELEASE_URL)?;
-    Ok(info
-        .tag_name
+    Ok(release_version_from_tag(&info.tag_name))
+}
+
+fn release_version_from_tag(tag_name: &str) -> String {
+    let tag_name = tag_name.strip_prefix("kbdevs-").unwrap_or(tag_name);
+    tag_name
         .strip_prefix("rust-v")
-        .unwrap_or(&info.tag_name)
-        .to_string())
+        .unwrap_or(tag_name)
+        .to_string()
 }
 
 fn fetch_homebrew_cask_version() -> Result<String, String> {
@@ -240,5 +244,11 @@ mod tests {
             }),
             "manual or unknown"
         );
+    }
+
+    #[test]
+    fn release_version_from_tag_supports_fork_tags() {
+        assert_eq!(release_version_from_tag("kbdevs-rust-v0.144.0"), "0.144.0");
+        assert_eq!(release_version_from_tag("rust-v0.144.0"), "0.144.0");
     }
 }
