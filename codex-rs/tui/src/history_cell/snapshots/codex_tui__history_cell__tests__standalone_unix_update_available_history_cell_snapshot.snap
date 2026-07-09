@@ -3,7 +3,7 @@ source: tui/src/history_cell/tests.rs
 expression: rendered
 ---
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ✨ Update available! 0.142.3 -> 9.9.9                                                                      │
+│ ✨ Update available! 0.144.0 -> 9.9.9                                                                      │
 │ Run sh -c 'curl -fsSL https://raw.githubusercontent.com/kbdevs/codex/main/scripts/install-kbdevs-codex.sh  │
 │ | CODEX_NON_INTERACTIVE=1 sh' to update.                                                                   │
 │                                                                                                            │
