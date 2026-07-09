@@ -37,6 +37,7 @@ mkdir -p "$tmp_dir/download" "$tmp_dir/release" "$releases_dir" "$bin_dir"
 curl -fsSL "$url" -o "$tmp_dir/$asset"
 tar -xzf "$tmp_dir/$asset" -C "$tmp_dir/download"
 install -m 755 "$tmp_dir/download/codex" "$tmp_dir/release/codex"
+install -m 755 "$tmp_dir/download/codex-code-mode-host" "$tmp_dir/release/codex-code-mode-host"
 
 rm -rf "$release_dir"
 mv "$tmp_dir/release" "$release_dir"

@@ -112,16 +112,20 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Build Codex
-        run: cargo build --locked --release --timings --target ${{ matrix.target }} --bin codex
+        run: >-
+          cargo build --locked --release --timings --target ${{ matrix.target }}
+          --bin codex --bin codex-code-mode-host
 
       - name: Smoke test Codex binary
         shell: bash
         run: |
           set -euo pipefail
           binary="target/${{ matrix.target }}/release/codex"
+          code_mode_host="target/${{ matrix.target }}/release/codex-code-mode-host"
           version="$("$binary" --version)"
           test -n "$version"
-          echo "Built ${version}"
+          test -x "$code_mode_host"
+          echo "Built ${version} with code-mode host"
 
       - name: Package binary
         shell: bash
@@ -129,8 +133,9 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp "target/${{ matrix.target }}/release/codex" dist/codex
-          chmod 755 dist/codex
-          tar -C dist -czf "codex-${{ matrix.target }}.tar.gz" codex
+          cp "target/${{ matrix.target }}/release/codex-code-mode-host" dist/codex-code-mode-host
+          chmod 755 dist/codex dist/codex-code-mode-host
+          tar -C dist -czf "codex-${{ matrix.target }}.tar.gz" codex codex-code-mode-host
 
       - uses: actions/upload-artifact@v4
         with:
