@@ -20,6 +20,8 @@ use crate::tool::protocol_goal_from_state;
 use tokio::sync::Semaphore;
 use tokio::sync::SemaphorePermit;
 
+const MAX_CYBER_POLICY_RETRIES: u32 = 10;
+
 #[derive(Clone)]
 pub struct GoalRuntimeHandle {
     inner: Arc<GoalRuntimeInner>,
@@ -34,6 +36,12 @@ pub(crate) struct GoalRuntimeConfig {
 pub(crate) enum ActiveGoalStopReason {
     TurnError,
     UsageLimit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CyberPolicyErrorDisposition {
+    Retry,
+    Block,
 }
 
 struct GoalRuntimeInner {
@@ -165,6 +173,13 @@ impl GoalRuntimeHandle {
             return Ok(());
         }
 
+        self.inner
+            .state_dbs
+            .thread_goals()
+            .clear_thread_goal_cyber_retry_state(self.thread_id())
+            .await
+            .map_err(|err| err.to_string())?;
+
         let replaced_existing_goal = previous_goal
             .as_ref()
             .is_some_and(|previous_goal| previous_goal.goal_id != goal.goal_id);
@@ -232,6 +247,12 @@ impl GoalRuntimeHandle {
 
         self.inner.analytics.cleared(&goal);
         self.inner.accounting_state.clear_active_goal();
+        self.inner
+            .state_dbs
+            .thread_goals()
+            .clear_thread_goal_cyber_retry_state(self.thread_id())
+            .await
+            .map_err(|err| err.to_string())?;
         Ok(())
     }
 
@@ -286,6 +307,12 @@ impl GoalRuntimeHandle {
             .map_err(|err| err.to_string())?
         else {
             self.inner.accounting_state.clear_active_goal();
+            self.inner
+                .state_dbs
+                .thread_goals()
+                .clear_thread_goal_cyber_retry_state(self.thread_id())
+                .await
+                .map_err(|err| err.to_string())?;
             return Ok(());
         };
         let can_stop = active_goal.status == codex_state::ThreadGoalStatus::Active
@@ -323,6 +350,12 @@ impl GoalRuntimeHandle {
             GoalEventAttribution::Turn(turn_id),
         );
         self.inner.accounting_state.clear_active_goal();
+        self.inner
+            .state_dbs
+            .thread_goals()
+            .clear_thread_goal_cyber_retry_state(self.thread_id())
+            .await
+            .map_err(|err| err.to_string())?;
         let goal = protocol_goal_from_state(goal);
         self.inner.event_emitter.thread_goal_updated(
             format!("{turn_id}:{event_name}"),
@@ -330,6 +363,119 @@ impl GoalRuntimeHandle {
             goal,
         );
         Ok(())
+    }
+
+    pub(crate) async fn prepare_turn_start(&self) -> Result<(), String> {
+        if !self.is_enabled() {
+            return Ok(());
+        }
+
+        let _goal_state_permit = self.goal_state_permit().await?;
+        let Some(state) = self
+            .inner
+            .state_dbs
+            .thread_goals()
+            .get_thread_goal_cyber_retry_state(self.thread_id())
+            .await
+            .map_err(|err| err.to_string())?
+        else {
+            return Ok(());
+        };
+        if !state.continuation_in_flight && state.last_failed_turn_id.is_some() {
+            self.inner
+                .state_dbs
+                .thread_goals()
+                .clear_thread_goal_cyber_retry_state(self.thread_id())
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn finish_turn(&self, turn_id: &str) -> Result<(), String> {
+        if !self.is_enabled() {
+            return Ok(());
+        }
+
+        let _goal_state_permit = self.goal_state_permit().await?;
+        let Some(state) = self
+            .inner
+            .state_dbs
+            .thread_goals()
+            .get_thread_goal_cyber_retry_state(self.thread_id())
+            .await
+            .map_err(|err| err.to_string())?
+        else {
+            return Ok(());
+        };
+        if state.last_failed_turn_id.as_deref() != Some(turn_id) {
+            self.inner
+                .state_dbs
+                .thread_goals()
+                .clear_thread_goal_cyber_retry_state(self.thread_id())
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn handle_cyber_policy_error(
+        &self,
+        turn_id: &str,
+    ) -> Result<CyberPolicyErrorDisposition, String> {
+        if !self.is_enabled() {
+            return Ok(CyberPolicyErrorDisposition::Retry);
+        }
+
+        let should_block = {
+            let _goal_state_permit = self.goal_state_permit().await?;
+            if !self
+                .inner
+                .accounting_state
+                .turn_is_current_active_goal(turn_id)
+            {
+                return Ok(CyberPolicyErrorDisposition::Retry);
+            }
+
+            let mut state = self
+                .inner
+                .state_dbs
+                .thread_goals()
+                .get_thread_goal_cyber_retry_state(self.thread_id())
+                .await
+                .map_err(|err| err.to_string())?
+                .unwrap_or_default();
+            if state.continuation_in_flight {
+                state.retry_attempts = state.retry_attempts.saturating_add(1);
+                state.rollback_pending = true;
+            }
+            state.continuation_in_flight = false;
+            state.last_failed_turn_id = Some(turn_id.to_string());
+            let should_block = state.retry_attempts >= MAX_CYBER_POLICY_RETRIES;
+            if !should_block {
+                self.inner
+                    .state_dbs
+                    .thread_goals()
+                    .set_thread_goal_cyber_retry_state(self.thread_id(), &state)
+                    .await
+                    .map_err(|err| err.to_string())?;
+            }
+            should_block
+        };
+
+        if should_block {
+            self.stop_active_goal_for_turn(turn_id, ActiveGoalStopReason::TurnError)
+                .await?;
+            self.inner
+                .state_dbs
+                .thread_goals()
+                .clear_thread_goal_cyber_retry_state(self.thread_id())
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(CyberPolicyErrorDisposition::Block)
+        } else {
+            Ok(CyberPolicyErrorDisposition::Retry)
+        }
     }
 
     pub async fn restore_after_resume(&self) -> Result<(), String> {
@@ -365,6 +511,17 @@ impl GoalRuntimeHandle {
         // change the goal after we read it but before the continuation launches.
         let _goal_state_permit = self.goal_state_permit().await?;
 
+        if self
+            .inner
+            .state_dbs
+            .thread_goals()
+            .has_thread_goal_continuation_deferral(self.thread_id())
+            .await
+            .map_err(|err| err.to_string())?
+        {
+            return Ok(());
+        }
+
         let Some(thread_manager) = self.inner.thread_manager.upgrade() else {
             tracing::debug!("skipping goal continuation because thread manager is unavailable");
             return Ok(());
@@ -387,11 +544,60 @@ impl GoalRuntimeHandle {
         };
         if goal.status != codex_state::ThreadGoalStatus::Active {
             self.inner.accounting_state.clear_active_goal();
+            self.inner
+                .state_dbs
+                .thread_goals()
+                .clear_thread_goal_cyber_retry_state(self.thread_id())
+                .await
+                .map_err(|err| err.to_string())?;
             return Ok(());
         }
+
+        let mut retry_state = self
+            .inner
+            .state_dbs
+            .thread_goals()
+            .get_thread_goal_cyber_retry_state(self.thread_id())
+            .await
+            .map_err(|err| err.to_string())?
+            .unwrap_or_default();
+        if retry_state.retry_attempts >= MAX_CYBER_POLICY_RETRIES {
+            self.inner.accounting_state.clear_active_goal();
+            return Ok(());
+        }
+        let rolled_back = retry_state.rollback_pending;
+        if rolled_back {
+            thread
+                .rollback_latest_turn()
+                .await
+                .map_err(|err| format!("failed to rollback cyber-policy continuation: {err}"))?;
+            retry_state.rollback_pending = false;
+            retry_state.last_failed_turn_id = None;
+        }
+        let previous_last_failed_turn_id = retry_state.last_failed_turn_id.clone();
+        retry_state.continuation_in_flight = true;
+        retry_state.last_failed_turn_id = None;
+        self.inner
+            .state_dbs
+            .thread_goals()
+            .set_thread_goal_cyber_retry_state(self.thread_id(), &retry_state)
+            .await
+            .map_err(|err| err.to_string())?;
         let item = continuation_steering_item(&protocol_goal_from_state(goal));
 
         if let Err(err) = thread.try_start_turn_if_idle(vec![item]).await {
+            retry_state.continuation_in_flight = false;
+            retry_state.last_failed_turn_id = if rolled_back {
+                None
+            } else {
+                previous_last_failed_turn_id
+            };
+            self.inner
+                .state_dbs
+                .thread_goals()
+                .set_thread_goal_cyber_retry_state(self.thread_id(), &retry_state)
+                .await
+                .map_err(|state_err| state_err.to_string())?;
             let reason = err.reason();
             tracing::debug!(
                 ?reason,

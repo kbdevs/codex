@@ -122,7 +122,6 @@ async fn thread_settings_update(
 ) -> SessionSettingsUpdate {
     let ThreadSettingsOverrides {
         environments,
-        workspace_roots,
         profile_workspace_roots,
         approval_policy,
         approvals_reviewer,
@@ -151,7 +150,6 @@ async fn thread_settings_update(
     };
     SessionSettingsUpdate {
         environments,
-        workspace_roots,
         profile_workspace_roots,
         approval_policy,
         approvals_reviewer,
@@ -460,73 +458,34 @@ pub async fn compact(sess: &Arc<Session>, sub_id: String) {
         .await;
 }
 
-pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32) {
+pub(crate) async fn rollback_thread(
+    sess: &Arc<Session>,
+    sub_id: String,
+    num_turns: u32,
+) -> Result<(), String> {
     if num_turns == 0 {
-        sess.send_event_raw(Event {
-            id: sub_id,
-            msg: EventMsg::Error(ErrorEvent {
-                message: "num_turns must be >= 1".to_string(),
-                codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-            }),
-        })
-        .await;
-        return;
+        return Err("num_turns must be >= 1".to_string());
     }
 
     let has_active_turn = { sess.active_turn.lock().await.is_some() };
     if has_active_turn {
-        sess.send_event_raw(Event {
-            id: sub_id,
-            msg: EventMsg::Error(ErrorEvent {
-                message: "Cannot rollback while a turn is in progress.".to_string(),
-                codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-            }),
-        })
-        .await;
-        return;
+        return Err("Cannot rollback while a turn is in progress.".to_string());
     }
 
     let turn_context = sess.new_default_turn_with_sub_id(sub_id).await;
-    let live_thread = match sess.live_thread_for_persistence("rollback thread") {
-        Ok(live_thread) => live_thread,
-        Err(_) => {
-            sess.send_event_raw(Event {
-                id: turn_context.sub_id.clone(),
-                msg: EventMsg::Error(ErrorEvent {
-                    message: "thread rollback requires persisted thread history".to_string(),
-                    codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-                }),
-            })
-            .await;
-            return;
-        }
-    };
+    let live_thread = sess
+        .live_thread_for_persistence("rollback thread")
+        .map_err(|_| "thread rollback requires persisted thread history".to_string())?;
     if let Err(err) = live_thread.flush().await {
-        sess.send_event_raw(Event {
-            id: turn_context.sub_id.clone(),
-            msg: EventMsg::Error(ErrorEvent {
-                message: format!("failed to flush thread persistence for rollback replay: {err}"),
-                codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-            }),
-        })
-        .await;
-        return;
+        return Err(format!(
+            "failed to flush thread persistence for rollback replay: {err}"
+        ));
     }
 
-    let stored_history = match live_thread.load_history(/*include_archived*/ false).await {
-        Ok(history) => history,
-        Err(err) => {
-            sess.send_event_raw(Event {
-                id: turn_context.sub_id.clone(),
-                msg: EventMsg::Error(ErrorEvent {
-                    message: format!("failed to load thread history for rollback replay: {err}"),
-                    codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
-                }),
-            })
-            .await;
-            return;
-        }
-    };
+    let stored_history = live_thread
+        .load_history(/*include_archived*/ false)
+        .await
+        .map_err(|err| format!("failed to load thread history for rollback replay: {err}"))?;
 
     let rollback_event = ThreadRolledBackEvent { num_turns };
     let rollback_msg = EventMsg::ThreadRolledBack(rollback_event.clone());
@@ -562,6 +521,21 @@ pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32
         msg: rollback_msg,
     })
     .await;
+
+    Ok(())
+}
+
+pub async fn thread_rollback(sess: &Arc<Session>, sub_id: String, num_turns: u32) {
+    if let Err(message) = rollback_thread(sess, sub_id.clone(), num_turns).await {
+        sess.send_event_raw(Event {
+            id: sub_id,
+            msg: EventMsg::Error(ErrorEvent {
+                message,
+                codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
+            }),
+        })
+        .await;
+    }
 }
 
 pub(super) async fn persist_thread_memory_mode_update(
@@ -609,12 +583,10 @@ async fn shutdown_session_runtime(sess: &Arc<Session>) {
     if let Err(err) = sess.services.code_mode_service.shutdown().await {
         warn!("failed to shutdown code mode session: {err}");
     }
-    sess.services
-        .latest_mcp_runtime()
-        .manager_arc()
-        .shutdown()
-        .await;
+    sess.services.mcp_runtime.shutdown().await;
     sess.guardian_review_session.shutdown().await;
+
+    crate::hook_runtime::run_session_end_hooks(sess).await;
 }
 
 async fn emit_thread_stop_lifecycle(sess: &Session) {

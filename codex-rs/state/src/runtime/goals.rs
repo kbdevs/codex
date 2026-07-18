@@ -24,6 +24,14 @@ pub struct GoalUpdate {
     pub expected_goal_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GoalCyberRetryState {
+    pub retry_attempts: u32,
+    pub continuation_in_flight: bool,
+    pub rollback_pending: bool,
+    pub last_failed_turn_id: Option<String>,
+}
+
 pub enum GoalAccountingOutcome {
     Unchanged(Option<crate::ThreadGoal>),
     Updated(crate::ThreadGoal),
@@ -63,6 +71,177 @@ WHERE thread_id = ?
         .await?;
 
         row.map(|row| thread_goal_from_row(&row)).transpose()
+    }
+
+    pub async fn get_thread_goal_cyber_retry_state(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<GoalCyberRetryState>> {
+        let row = sqlx::query(
+            r#"
+SELECT retry_attempts, continuation_in_flight, rollback_pending, last_failed_turn_id
+FROM thread_goal_cyber_retries
+WHERE thread_id = ?
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+
+        row.map(|row| {
+            let retry_attempts = row
+                .get::<i64, _>("retry_attempts")
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("cyber retry attempt count is out of range"))?;
+            Ok(GoalCyberRetryState {
+                retry_attempts,
+                continuation_in_flight: row.get::<i64, _>("continuation_in_flight") != 0,
+                rollback_pending: row.get::<i64, _>("rollback_pending") != 0,
+                last_failed_turn_id: row.get("last_failed_turn_id"),
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn set_thread_goal_cyber_retry_state(
+        &self,
+        thread_id: ThreadId,
+        state: &GoalCyberRetryState,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            r#"
+INSERT INTO thread_goal_cyber_retries (
+    thread_id,
+    retry_attempts,
+    continuation_in_flight,
+    rollback_pending,
+    last_failed_turn_id
+) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(thread_id) DO UPDATE SET
+    retry_attempts = excluded.retry_attempts,
+    continuation_in_flight = excluded.continuation_in_flight,
+    rollback_pending = excluded.rollback_pending,
+    last_failed_turn_id = excluded.last_failed_turn_id
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .bind(i64::from(state.retry_attempts))
+        .bind(if state.continuation_in_flight {
+            1_i64
+        } else {
+            0
+        })
+        .bind(if state.rollback_pending { 1_i64 } else { 0 })
+        .bind(&state.last_failed_turn_id)
+        .execute(self.pool.as_ref())
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn clear_thread_goal_cyber_retry_state(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM thread_goal_cyber_retries WHERE thread_id = ?")
+            .bind(thread_id.to_string())
+            .execute(self.pool.as_ref())
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn replace_thread_goal_snapshot(
+        &self,
+        goal: &crate::ThreadGoal,
+    ) -> anyhow::Result<()> {
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query(
+            r#"
+INSERT INTO thread_goals (
+    thread_id,
+    goal_id,
+    objective,
+    status,
+    token_budget,
+    tokens_used,
+    time_used_seconds,
+    created_at_ms,
+    updated_at_ms
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(thread_id) DO UPDATE SET
+    goal_id = excluded.goal_id,
+    objective = excluded.objective,
+    status = excluded.status,
+    token_budget = excluded.token_budget,
+    tokens_used = excluded.tokens_used,
+    time_used_seconds = excluded.time_used_seconds,
+    created_at_ms = excluded.created_at_ms,
+    updated_at_ms = excluded.updated_at_ms
+            "#,
+        )
+        .bind(goal.thread_id.to_string())
+        .bind(&goal.goal_id)
+        .bind(&goal.objective)
+        .bind(goal.status.as_str())
+        .bind(goal.token_budget)
+        .bind(goal.tokens_used)
+        .bind(goal.time_used_seconds)
+        .bind(datetime_to_epoch_millis(goal.created_at))
+        .bind(datetime_to_epoch_millis(goal.updated_at))
+        .execute(&mut *transaction)
+        .await?;
+
+        sqlx::query(
+            r#"
+INSERT INTO thread_goal_continuation_deferrals (thread_id)
+VALUES (?)
+ON CONFLICT(thread_id) DO NOTHING
+            "#,
+        )
+        .bind(goal.thread_id.to_string())
+        .execute(&mut *transaction)
+        .await?;
+
+        sqlx::query("DELETE FROM thread_goal_cyber_retries WHERE thread_id = ?")
+            .bind(goal.thread_id.to_string())
+            .execute(&mut *transaction)
+            .await?;
+
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn has_thread_goal_continuation_deferral(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<bool> {
+        sqlx::query_scalar(
+            r#"
+SELECT EXISTS(
+    SELECT 1
+    FROM thread_goal_continuation_deferrals
+    WHERE thread_id = ?
+)
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .fetch_one(self.pool.as_ref())
+        .await
+        .map_err(Into::into)
+    }
+
+    pub async fn clear_thread_goal_continuation_deferral(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM thread_goal_continuation_deferrals WHERE thread_id = ?")
+            .bind(thread_id.to_string())
+            .execute(self.pool.as_ref())
+            .await?;
+
+        Ok(())
     }
 
     pub async fn replace_thread_goal(
@@ -119,7 +298,9 @@ RETURNING
         .fetch_one(self.pool.as_ref())
         .await?;
 
-        thread_goal_from_row(&row)
+        let goal = thread_goal_from_row(&row)?;
+        self.clear_thread_goal_cyber_retry_state(thread_id).await?;
+        Ok(goal)
     }
 
     pub async fn insert_thread_goal(
@@ -177,7 +358,11 @@ RETURNING
         .fetch_optional(self.pool.as_ref())
         .await?;
 
-        row.map(|row| thread_goal_from_row(&row)).transpose()
+        let goal = row.map(|row| thread_goal_from_row(&row)).transpose()?;
+        if goal.is_some() {
+            self.clear_thread_goal_cyber_retry_state(thread_id).await?;
+        }
+        Ok(goal)
     }
 
     pub async fn update_thread_goal(
@@ -405,7 +590,9 @@ RETURNING
         .fetch_optional(self.pool.as_ref())
         .await?;
 
-        row.map(|row| thread_goal_from_row(&row)).transpose()
+        let goal = row.map(|row| thread_goal_from_row(&row)).transpose()?;
+        self.clear_thread_goal_cyber_retry_state(thread_id).await?;
+        Ok(goal)
     }
 
     pub async fn account_thread_goal_usage(

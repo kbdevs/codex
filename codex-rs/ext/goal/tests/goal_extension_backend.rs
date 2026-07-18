@@ -604,6 +604,95 @@ async fn turn_error_blocks_goal() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn cyber_policy_error_keeps_goal_active_and_records_retry_state() -> anyhow::Result<()> {
+    let runtime = test_runtime().await?;
+    let thread_id = test_thread_id()?;
+    seed_thread_metadata(runtime.as_ref(), thread_id).await?;
+    let harness = GoalExtensionHarness::new(runtime.clone(), thread_id).await?;
+    harness.start_turn("turn-1", &TokenUsage::default()).await;
+
+    tool_by_name(&harness.tools(), "create_goal")
+        .handle(tool_call(
+            "create_goal",
+            "call-create-goal",
+            json!({ "objective": "retry cyber policy blocks" }),
+        ))
+        .await?;
+
+    harness
+        .notify_turn_error("turn-1", CodexErrorInfo::CyberPolicy)
+        .await;
+
+    let goal = runtime
+        .thread_goals()
+        .get_thread_goal(thread_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("goal should exist"))?;
+    assert_eq!(codex_state::ThreadGoalStatus::Active, goal.status);
+    assert_eq!(
+        Some(codex_state::GoalCyberRetryState {
+            retry_attempts: 0,
+            continuation_in_flight: false,
+            rollback_pending: false,
+            last_failed_turn_id: Some("turn-1".to_string()),
+        }),
+        runtime
+            .thread_goals()
+            .get_thread_goal_cyber_retry_state(thread_id)
+            .await?
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cyber_policy_retry_blocks_after_tenth_automatic_failure() -> anyhow::Result<()> {
+    let runtime = test_runtime().await?;
+    let thread_id = test_thread_id()?;
+    seed_thread_metadata(runtime.as_ref(), thread_id).await?;
+    let harness = GoalExtensionHarness::new(runtime.clone(), thread_id).await?;
+    harness.start_turn("turn-10", &TokenUsage::default()).await;
+
+    tool_by_name(&harness.tools(), "create_goal")
+        .handle(tool_call(
+            "create_goal",
+            "call-create-goal",
+            json!({ "objective": "stop after ten cyber retries" }),
+        ))
+        .await?;
+    runtime
+        .thread_goals()
+        .set_thread_goal_cyber_retry_state(
+            thread_id,
+            &codex_state::GoalCyberRetryState {
+                retry_attempts: 9,
+                continuation_in_flight: true,
+                rollback_pending: false,
+                last_failed_turn_id: None,
+            },
+        )
+        .await?;
+
+    harness
+        .notify_turn_error("turn-10", CodexErrorInfo::CyberPolicy)
+        .await;
+
+    let goal = runtime
+        .thread_goals()
+        .get_thread_goal(thread_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("goal should exist"))?;
+    assert_eq!(codex_state::ThreadGoalStatus::Blocked, goal.status);
+    assert_eq!(
+        None,
+        runtime
+            .thread_goals()
+            .get_thread_goal_cyber_retry_state(thread_id)
+            .await?
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn usage_limit_budget_limited_goal_accounts_remaining_progress() -> anyhow::Result<()> {
     let runtime = test_runtime().await?;
     let thread_id = test_thread_id()?;
@@ -1343,6 +1432,7 @@ fn tool_call(tool_name: &str, call_id: &str, arguments: serde_json::Value) -> To
         call_id: call_id.to_string(),
         tool_name: codex_extension_api::ToolName::plain(tool_name),
         model: "gpt-test".to_string(),
+        codex_turn_metadata: None,
         truncation_policy: TruncationPolicy::Bytes(1024),
         conversation_history: codex_extension_api::ConversationHistory::default(),
         turn_item_emitter: Arc::new(NoopTurnItemEmitter),
@@ -1442,6 +1532,7 @@ fn token_usage(
     TokenUsage {
         input_tokens,
         cached_input_tokens,
+        cache_write_input_tokens: 0,
         output_tokens,
         reasoning_output_tokens,
         total_tokens,

@@ -23,7 +23,7 @@ expression: commands
 /undo - roll back the latest user turn
 /export - export the current chat as markdown
 /import-md - import a markdown chat export: /import-md <path>
-/app - continue this session in Codex Desktop
+/app - continue this session in the Desktop app
 /init - create an AGENTS.md file with instructions for Codex
 /compact - summarize conversation to prevent hitting the context limit
 /agent - switch the active agent thread

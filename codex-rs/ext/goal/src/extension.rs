@@ -39,6 +39,7 @@ use crate::api::GoalService;
 use crate::events::GoalEventEmitter;
 use crate::metrics::GoalMetrics;
 use crate::runtime::ActiveGoalStopReason;
+use crate::runtime::CyberPolicyErrorDisposition;
 use crate::runtime::GoalRuntimeConfig;
 use crate::runtime::GoalRuntimeHandle;
 use crate::spec::UPDATE_GOAL_TOOL_NAME;
@@ -207,6 +208,19 @@ where
                 return;
             }
 
+            if let Err(err) = runtime.prepare_turn_start().await {
+                tracing::warn!("failed to prepare goal retry state for turn start: {err}");
+            }
+
+            if let Err(err) = self
+                .state_dbs
+                .thread_goals()
+                .clear_thread_goal_continuation_deferral(runtime.thread_id())
+                .await
+            {
+                tracing::warn!("failed to clear deferred goal continuation: {err}");
+            }
+
             let accounting = runtime.accounting_state();
             accounting.start_turn(
                 input.turn_id,
@@ -265,6 +279,9 @@ where
                 return;
             }
             runtime.accounting_state().finish_turn(turn_id);
+            if let Err(err) = runtime.finish_turn(turn_id).await {
+                tracing::warn!("failed to finish goal retry state for {turn_id}: {err}");
+            }
         })
     }
 
@@ -301,6 +318,19 @@ where
             let Some(runtime) = goal_runtime_handle(input.thread_store) else {
                 return;
             };
+
+            if matches!(&input.error, CodexErrorInfo::CyberPolicy) {
+                match runtime.handle_cyber_policy_error(input.turn_id).await {
+                    Ok(CyberPolicyErrorDisposition::Retry) => return,
+                    Ok(CyberPolicyErrorDisposition::Block) => return,
+                    Err(err) => {
+                        tracing::warn!(
+                            error = ?input.error,
+                            "failed to handle cyber policy error for active goal: {err}"
+                        );
+                    }
+                }
+            }
 
             let reason = match input.error {
                 CodexErrorInfo::UsageLimitExceeded => ActiveGoalStopReason::UsageLimit,
