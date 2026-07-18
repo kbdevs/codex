@@ -483,6 +483,24 @@ impl GoalRuntimeHandle {
             return Ok(());
         }
 
+        if let Some(mut retry_state) = self
+            .inner
+            .state_dbs
+            .thread_goals()
+            .get_thread_goal_cyber_retry_state(self.thread_id())
+            .await
+            .map_err(|err| err.to_string())?
+            && retry_state.continuation_in_flight
+        {
+            retry_state.continuation_in_flight = false;
+            self.inner
+                .state_dbs
+                .thread_goals()
+                .set_thread_goal_cyber_retry_state(self.thread_id(), &retry_state)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+
         let goal = self
             .inner
             .state_dbs
@@ -561,6 +579,9 @@ impl GoalRuntimeHandle {
             .await
             .map_err(|err| err.to_string())?
             .unwrap_or_default();
+        if retry_state.continuation_in_flight {
+            return Ok(());
+        }
         if retry_state.retry_attempts >= MAX_CYBER_POLICY_RETRIES {
             self.inner.accounting_state.clear_active_goal();
             return Ok(());
@@ -584,8 +605,10 @@ impl GoalRuntimeHandle {
             .await
             .map_err(|err| err.to_string())?;
         let item = continuation_steering_item(&protocol_goal_from_state(goal));
+        drop(_goal_state_permit);
 
         if let Err(err) = thread.try_start_turn_if_idle(vec![item]).await {
+            let _goal_state_permit = self.goal_state_permit().await?;
             retry_state.continuation_in_flight = false;
             retry_state.last_failed_turn_id = if rolled_back {
                 None
