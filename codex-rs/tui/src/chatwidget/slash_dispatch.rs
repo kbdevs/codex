@@ -249,9 +249,6 @@ impl ChatWidget {
             SlashCommand::Undo => {
                 self.app_event_tx.send(AppEvent::UndoLastTurn);
             }
-            SlashCommand::Export => {
-                self.app_event_tx.send(AppEvent::ExportTranscript);
-            }
             SlashCommand::ImportMarkdown => {
                 self.add_error_message("Usage: /import-md <path>".to_string());
             }
@@ -1118,7 +1115,6 @@ impl ChatWidget {
             | SlashCommand::Rename
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback
-            | SlashCommand::Export
             | SlashCommand::New
             | SlashCommand::Archive
             | SlashCommand::Delete

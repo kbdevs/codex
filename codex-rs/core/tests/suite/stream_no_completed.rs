@@ -235,7 +235,8 @@ async fn stalled_stream_retries_after_idle_timeout() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn connection_failure_pauses_retry_budget_until_provider_is_reachable() -> anyhow::Result<()> {
+async fn connection_failure_pauses_retry_budget_until_provider_is_reachable() -> anyhow::Result<()>
+{
     skip_if_no_network!(Ok(()));
 
     let bootstrap_server = responses::start_mock_server().await;

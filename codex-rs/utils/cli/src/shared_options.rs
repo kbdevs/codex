@@ -32,7 +32,7 @@ pub struct SharedCliOptions {
     pub oss_provider: Option<String>,
 
     /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
-    #[arg(long = "profile", short = 'p')]
+    #[arg(long = "profile", alias = "profile-v2", short = 'p')]
     pub config_profile_v2: Option<ProfileV2Name>,
 
     /// Select the sandbox policy to use when executing model-generated shell

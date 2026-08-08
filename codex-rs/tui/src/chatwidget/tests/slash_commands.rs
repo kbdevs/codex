@@ -2187,15 +2187,6 @@ async fn slash_undo_requests_latest_turn_rollback() {
 }
 
 #[tokio::test]
-async fn slash_export_requests_transcript_export() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-
-    chat.dispatch_command(SlashCommand::Export);
-
-    assert_matches!(rx.try_recv(), Ok(AppEvent::ExportTranscript));
-}
-
-#[tokio::test]
 async fn slash_import_requests_transcript_import() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

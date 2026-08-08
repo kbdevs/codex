@@ -23,7 +23,7 @@ fn parses_marked_export_without_splitting_markdown_headings() {
             .collect::<Vec<_>>(),
         vec![
             (ImportSectionKind::User, "hello"),
-            (ImportSectionKind::Codex, "## Assistant heading\n\nbody"),
+            (ImportSectionKind::Assistant, "## Assistant heading\n\nbody"),
         ]
     );
 }
@@ -41,7 +41,35 @@ fn parses_legacy_heading_export() {
             .collect::<Vec<_>>(),
         vec![
             (ImportSectionKind::User, "hello"),
-            (ImportSectionKind::Codex, "hey"),
+            (ImportSectionKind::Assistant, "hey"),
+        ]
+    );
+}
+
+#[test]
+fn parses_current_export_headings() {
+    let markdown = concat!(
+        "# Codex conversation\n\n",
+        "## User\n\nhello\n\n",
+        "## Assistant\n\nresponse\n\n",
+        "## Plan\n\nstep\n\n",
+        "## Reasoning\n\nthought\n\n",
+        "## Activity\n\n    file changed\n",
+    );
+
+    let sections = parse_exported_transcript(markdown).expect("valid export");
+
+    assert_eq!(
+        sections
+            .iter()
+            .map(|section| (section.kind, section.body.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (ImportSectionKind::User, "hello"),
+            (ImportSectionKind::Assistant, "response"),
+            (ImportSectionKind::Plan, "step"),
+            (ImportSectionKind::Reasoning, "thought"),
+            (ImportSectionKind::Activity, "    file changed"),
         ]
     );
 }

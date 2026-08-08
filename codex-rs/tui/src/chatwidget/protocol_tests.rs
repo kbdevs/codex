@@ -1,5 +1,6 @@
 use super::completed_item_starts_next_agent_cycle;
 use codex_app_server_protocol::DynamicToolCallStatus;
+use codex_app_server_protocol::SleepItem;
 use codex_app_server_protocol::ThreadItem;
 use codex_protocol::models::MessagePhase;
 use pretty_assertions::assert_eq;
@@ -33,10 +34,10 @@ fn completed_tool_items_start_the_next_agent_cycle() {
         phase: Some(MessagePhase::FinalAnswer),
         memory_citation: None,
     };
-    let sleep = ThreadItem::Sleep {
+    let sleep = ThreadItem::Sleep(SleepItem {
         id: "sleep-1".to_string(),
         duration_ms: 20_000,
-    };
+    });
 
     assert_eq!(
         (

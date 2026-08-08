@@ -36,7 +36,6 @@ pub enum SlashCommand {
     Resume,
     Fork,
     Undo,
-    Export,
     #[strum(serialize = "import-md")]
     ImportMarkdown,
     App,
@@ -99,7 +98,6 @@ impl SlashCommand {
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
             SlashCommand::Undo => "roll back the latest user turn",
-            SlashCommand::Export => "export the current chat as markdown",
             SlashCommand::ImportMarkdown => "import a markdown chat export: /import-md <path>",
             SlashCommand::App => "continue this session in Codex Desktop",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
@@ -225,7 +223,6 @@ impl SlashCommand {
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff
-            | SlashCommand::Export
             | SlashCommand::Resume
             | SlashCommand::Model
             | SlashCommand::Personality

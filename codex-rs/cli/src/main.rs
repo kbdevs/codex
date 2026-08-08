@@ -440,7 +440,7 @@ type HostSandboxArgs = UnsupportedSandboxArgs;
 #[derive(Debug, Parser)]
 struct UnsupportedSandboxArgs {
     /// Layer $CODEX_HOME/<name>.config.toml on top of the base user config.
-    #[arg(long = "profile", short = 'p')]
+    #[arg(long = "profile", alias = "profile-v2", short = 'p')]
     pub config_profile: Option<ProfileV2Name>,
 
     #[clap(skip)]
@@ -2922,6 +2922,16 @@ mod tests {
         assert_eq!(
             profile_v2_for_args(&["codex", "--profile", "work", "sandbox"])
                 .expect("sandbox supports config profile")
+                .as_deref(),
+            Some("work")
+        );
+    }
+
+    #[test]
+    fn profile_v2_alias_remains_accepted() {
+        assert_eq!(
+            profile_v2_for_args(&["codex", "--profile-v2", "work", "resume"])
+                .expect("legacy profile-v2 alias should parse")
                 .as_deref(),
             Some("work")
         );

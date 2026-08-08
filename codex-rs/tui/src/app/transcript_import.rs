@@ -2,7 +2,9 @@ use super::*;
 use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
+use crate::history_cell::ReasoningSummaryCell;
 use crate::history_cell::UserHistoryCell;
+use crate::history_cell::new_proposed_plan;
 use crate::history_cell::raw_lines_from_source;
 use std::path::Path;
 use std::path::PathBuf;
@@ -14,8 +16,10 @@ const SECTION_MARKER_SUFFIX: &str = "-->";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImportSectionKind {
     User,
-    Codex,
-    Event,
+    Assistant,
+    Plan,
+    Reasoning,
+    Activity,
 }
 
 #[derive(Debug)]
@@ -115,8 +119,17 @@ fn imported_section_cell(section: ImportSection, cwd: &Path) -> Arc<dyn HistoryC
             local_image_paths: Vec::new(),
             remote_image_urls: Vec::new(),
         }),
-        ImportSectionKind::Codex => Arc::new(AgentMarkdownCell::new(section.body, cwd)),
-        ImportSectionKind::Event => {
+        ImportSectionKind::Assistant => Arc::new(
+            AgentMarkdownCell::new_with_inline_visualizations(section.body, cwd, None),
+        ),
+        ImportSectionKind::Plan => Arc::new(new_proposed_plan(section.body, cwd)),
+        ImportSectionKind::Reasoning => Arc::new(ReasoningSummaryCell::new(
+            "Reasoning".to_string(),
+            section.body,
+            cwd,
+            /*transcript_only*/ false,
+        )),
+        ImportSectionKind::Activity => {
             Arc::new(PlainHistoryCell::new(raw_lines_from_source(&section.body)))
         }
     }
@@ -124,7 +137,12 @@ fn imported_section_cell(section: ImportSection, cwd: &Path) -> Arc<dyn HistoryC
 
 fn parse_exported_transcript(markdown: &str) -> Result<Vec<ImportSection>, String> {
     let body = markdown.strip_prefix('\u{feff}').unwrap_or(markdown);
-    let Some(after_header) = body.strip_prefix(super::transcript_export::EXPORT_HEADER) else {
+    let Some(after_header) = [
+        "# Codex conversation",
+        super::transcript_export::EXPORT_HEADER,
+    ]
+    .iter()
+    .find_map(|header| body.strip_prefix(header)) else {
         return Err("file is not a Codex chat export".to_string());
     };
 
@@ -231,8 +249,10 @@ fn section_kind_from_heading(line: &str) -> Option<ImportSectionKind> {
 fn section_kind_from_name(name: &str) -> Option<ImportSectionKind> {
     match name {
         "User" => Some(ImportSectionKind::User),
-        "Codex" => Some(ImportSectionKind::Codex),
-        "Event" => Some(ImportSectionKind::Event),
+        "Assistant" | "Codex" => Some(ImportSectionKind::Assistant),
+        "Plan" => Some(ImportSectionKind::Plan),
+        "Reasoning" => Some(ImportSectionKind::Reasoning),
+        "Activity" | "Event" => Some(ImportSectionKind::Activity),
         _ => None,
     }
 }

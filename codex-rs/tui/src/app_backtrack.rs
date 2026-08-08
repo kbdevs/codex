@@ -219,7 +219,7 @@ impl App {
             return;
         };
         let Some(nth_user_message) = user_count(&self.transcript_cells).checked_sub(1) else {
-            self.app_event_tx.send(AppEvent::NewSession);
+            self.app_event_tx.send(AppEvent::NewSession { name: None });
             return;
         };
 

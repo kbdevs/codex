@@ -815,6 +815,8 @@ async fn reconstruct_history_rollback_counts_typed_inter_agent_metadata_turns() 
             codex_protocol::protocol::TurnCompleteEvent {
                 turn_id: first_turn_id,
                 last_agent_message: None,
+                error: None,
+                started_at: None,
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
@@ -838,6 +840,8 @@ async fn reconstruct_history_rollback_counts_typed_inter_agent_metadata_turns() 
             codex_protocol::protocol::TurnCompleteEvent {
                 turn_id: assistant_turn_id,
                 last_agent_message: None,
+                error: None,
+                started_at: None,
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
@@ -1140,6 +1144,8 @@ async fn reconstruct_history_rollback_after_compaction_drops_latest_user_turn_an
             codex_protocol::protocol::TurnCompleteEvent {
                 turn_id: first_turn_id,
                 last_agent_message: None,
+                error: None,
+                started_at: None,
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
@@ -1174,6 +1180,8 @@ async fn reconstruct_history_rollback_after_compaction_drops_latest_user_turn_an
             codex_protocol::protocol::TurnCompleteEvent {
                 turn_id: second_turn_id,
                 last_agent_message: None,
+                error: None,
+                started_at: None,
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
@@ -1200,6 +1208,8 @@ async fn reconstruct_history_rollback_after_compaction_drops_latest_user_turn_an
             codex_protocol::protocol::TurnCompleteEvent {
                 turn_id: compact_turn_id,
                 last_agent_message: None,
+                error: None,
+                started_at: None,
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
@@ -1262,6 +1272,8 @@ async fn reconstruct_history_rollback_after_compaction_trims_compacted_history()
             codex_protocol::protocol::TurnCompleteEvent {
                 turn_id: compact_turn_id,
                 last_agent_message: None,
+                error: None,
+                started_at: None,
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
@@ -1321,6 +1333,8 @@ async fn reconstruct_rollback_counts_raw_turns_before_trimming_compaction() {
             codex_protocol::protocol::TurnCompleteEvent {
                 turn_id: compact_turn_id,
                 last_agent_message: None,
+                error: None,
+                started_at: None,
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,
@@ -1341,6 +1355,8 @@ async fn reconstruct_rollback_counts_raw_turns_before_trimming_compaction() {
             codex_protocol::protocol::TurnCompleteEvent {
                 turn_id: raw_turn_id,
                 last_agent_message: None,
+                error: None,
+                started_at: None,
                 completed_at: None,
                 duration_ms: None,
                 time_to_first_token_ms: None,

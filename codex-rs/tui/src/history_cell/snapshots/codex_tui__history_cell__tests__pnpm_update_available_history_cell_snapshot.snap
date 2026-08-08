@@ -3,7 +3,7 @@ source: tui/src/history_cell/tests.rs
 expression: rendered
 ---
 ╭─────────────────────────────────────────────────╮
-│ ✨ Update available! 0.144.0 -> 9.9.9           │
+│ ✨ Update available! 0.144.3 -> 9.9.9           │
 │ Run pnpm add -g @kbdevs/codex to update.        │
 │                                                 │
 │ See full release notes:                         │

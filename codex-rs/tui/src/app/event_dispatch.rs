@@ -112,10 +112,6 @@ impl App {
                 self.undo_last_turn();
                 tui.frame_requester().schedule_frame();
             }
-            AppEvent::ExportTranscript => {
-                self.export_transcript_to_markdown();
-                tui.frame_requester().schedule_frame();
-            }
             AppEvent::ImportTranscript { path } => {
                 self.import_transcript_from_markdown(tui, &path);
                 tui.frame_requester().schedule_frame();
