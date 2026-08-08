@@ -12,6 +12,7 @@
 //!   active managed-dir conflicts.
 //! - `permissions.filesystem.deny_read` is a high-priority-first union across
 //!   layers.
+//! - `auto_review.required_on_models` is a high-priority-first union across layers.
 
 use crate::ConfigRequirementsToml;
 use crate::ConfigRequirementsWithSources;
@@ -27,6 +28,7 @@ use super::hooks::HookDirectoryField;
 use super::hooks::HookMergeState;
 use super::layer::ComposableRequirementsLayer;
 use super::layer::RequirementsLayerEntry;
+use super::models::AutoReviewModelsMergeState;
 use super::permissions::DenyReadMergeState;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -165,6 +167,7 @@ impl RequirementsLayerStack {
         let mut hooks = HookMergeState::new(hook_directory_field);
         let mut hooks_output = None;
         let mut deny_read = DenyReadMergeState::default();
+        let mut auto_review_models = AutoReviewModelsMergeState::default();
         // Regular TOML fields are folded low-to-high like config. These custom
         // fields append or union values, so process them high-to-low to keep
         // priority order visible in the output.
@@ -177,10 +180,12 @@ impl RequirementsLayerStack {
                 &layer.source,
             )?;
             deny_read.merge(domain_fields.permissions.clone(), &layer.source);
+            auto_review_models.merge(domain_fields.auto_review.clone(), &layer.source);
         }
         output.rules = rules;
         output.hooks = hooks_output;
         deny_read.apply_to(&mut output.permissions);
+        auto_review_models.apply_to(&mut output.auto_review);
 
         let output_is_empty = output.clone().into_toml().is_empty();
         Ok((!output_is_empty).then_some(output))
@@ -206,6 +211,14 @@ fn populate_merged_regular_fields_with_sources(
     // Destructure without `..` so every new requirements field must choose
     // whether it belongs in the regular TOML merge path or in a special merger.
     let ConfigRequirementsToml {
+        allowed_login_methods,
+        allowed_chatgpt_workspaces,
+        sqlite_home,
+        log_dir,
+        model_catalog_json,
+        check_for_update_on_startup,
+        allow_login_shell,
+        feedback,
         allowed_approval_policies,
         allowed_approvals_reviewers,
         allowed_sandbox_modes,
@@ -217,6 +230,7 @@ fn populate_merged_regular_fields_with_sources(
         allow_appshots,
         allow_remote_control,
         computer_use,
+        browser_use,
         windows,
         feature_requirements,
         hooks: _,
@@ -228,10 +242,22 @@ fn populate_merged_regular_fields_with_sources(
         enforce_residency,
         network,
         permissions,
+        auto_review,
         models,
         guardian_policy_config,
     } = requirements;
 
+    set_sourced!(allowed_login_methods, &["allowed_login_methods"]);
+    set_sourced!(allowed_chatgpt_workspaces, &["allowed_chatgpt_workspaces"]);
+    set_sourced!(sqlite_home, &["sqlite_home"]);
+    set_sourced!(log_dir, &["log_dir"]);
+    set_sourced!(model_catalog_json, &["model_catalog_json"]);
+    set_sourced!(
+        check_for_update_on_startup,
+        &["check_for_update_on_startup"]
+    );
+    set_sourced!(allow_login_shell, &["allow_login_shell"]);
+    set_sourced!(feedback, &["feedback"]);
     set_sourced!(allowed_approval_policies, &["allowed_approval_policies"]);
     set_sourced!(
         allowed_approvals_reviewers,
@@ -247,7 +273,9 @@ fn populate_merged_regular_fields_with_sources(
     set_sourced!(allow_managed_hooks_only, &["allow_managed_hooks_only"]);
     set_sourced!(allow_appshots, &["allow_appshots"]);
     set_sourced!(allow_remote_control, &["allow_remote_control"]);
+    set_sourced!(auto_review, &["auto_review"]);
     set_sourced!(computer_use, &["computer_use"]);
+    set_sourced!(browser_use, &["browser_use"]);
     set_sourced!(windows, &["windows"]);
     set_sourced!(feature_requirements, &["features", "feature_requirements"]);
     set_sourced!(mcp_servers, &["mcp_servers"]);

@@ -85,7 +85,18 @@
 //! Parent-owned subagent threads keep the draft editable while blocking agent-directed submission.
 //! On the `Enter` and `Tab` submission paths, normal prompts, disallowed slash commands, and `!`
 //! shell commands return `ParentOwnedInputBlocked` without clearing the draft. Bare local and
-//! navigation slash commands remain available so users can leave or manage the view.
+//! navigation slash commands remain available so users can leave or manage the view. Transcript
+//! exports also remain available, including an explicit destination filename.
+//!
+//! # Reasoning Effort Animations
+//!
+//! The composer observes the effective reasoning tier whenever model-dependent surfaces refresh.
+//! The first observation, session configuration, and restored threads establish a baseline;
+//! genuine changes to Max/Ultra can then queue composer and status-line transitions when motion
+//! and color support allow them.
+//! Repeated selections do not restart either effect, dropping below Max clears them, and
+//! restoration clears any transition queued while replaying the saved session. Rendering advances
+//! active transitions through the frame requester until they finish.
 //!
 //! # Large Paste Placeholders
 //!
@@ -161,6 +172,7 @@
 //!
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
+use crate::key_hint::ShortcutHint;
 use crate::key_hint::has_ctrl_or_alt;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::ui_consts::FOOTER_INDENT_COLS;
@@ -182,13 +194,22 @@ use ratatui::text::Span;
 use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::StatefulWidgetRef;
+use ratatui::widgets::Widget;
 use ratatui::widgets::WidgetRef;
+
+use codex_protocol::openai_models::ReasoningEffort;
 
 use super::chat_composer_history::ChatComposerHistory;
 use super::chat_composer_history::HistoryEntry;
 use super::chat_composer_history::HistoryEntryResponse;
 use super::chat_composer_history::HistorySearchResult;
 use super::command_popup::CommandItem;
+use super::effort_ignition::EffortIgnition;
+use super::effort_ignition::EffortTier;
+use super::effort_ignition::IGNITION_FRAME_TICK;
+use super::effort_ignition::IgnitionStyle;
+use super::effort_status_line::EFFORT_STATUS_LINE_FRAME_TICK;
+use super::effort_status_line::EffortStatusLineTransition;
 use super::file_search_popup::FileSearchPopup;
 use super::footer::CollaborationModeIndicator;
 use super::footer::FooterKeyHints;
@@ -229,9 +250,11 @@ use crate::bottom_pane::paste_burst::FlushResult;
 use crate::history_cell::sanitize_user_text;
 use crate::key_hint::KeyBindingListExt;
 use crate::keymap::EditorKeymap;
+use crate::keymap::KeymapContext;
+use crate::keymap::KeymapContextSet;
 use crate::keymap::RuntimeKeymap;
 use crate::keymap::VimNormalKeymap;
-use crate::keymap::primary_binding;
+use crate::keymap::user_bindings;
 use crate::onboarding::mark_underlined_hyperlink;
 use crate::render::Insets;
 use crate::render::RectExt;
@@ -274,10 +297,10 @@ use crate::history_cell;
 use crate::skills_helpers::skill_display_name;
 use crate::tui::FrameRequester;
 use crate::ui_consts::LIVE_PREFIX_COLS;
-use codex_connectors::AppInfo;
 #[cfg(test)]
-use codex_core_skills::model::SkillInterface;
-use codex_core_skills::model::SkillMetadata;
+use codex_app_server_protocol::SkillInterface;
+use codex_app_server_protocol::SkillMetadata;
+use codex_connectors::AppInfo;
 use codex_file_search::FileMatch;
 #[cfg(test)]
 use codex_plugin::AppConnectorId;
@@ -335,6 +358,10 @@ pub enum InputResult {
 }
 
 fn parent_owned_command_is_allowed(command: SlashCommand, args: &str) -> bool {
+    if command == SlashCommand::Export {
+        return true;
+    }
+
     args.is_empty()
         && matches!(
             command,
@@ -441,6 +468,11 @@ pub(crate) struct ChatComposer {
     footer: FooterState,
     has_focus: bool,
     frame_requester: Option<FrameRequester>,
+    effort_tier: Option<EffortTier>,
+    effort_animation_style: Option<IgnitionStyle>,
+    effort_ignition: Option<EffortIgnition>,
+    effort_status_line_transition: Option<EffortStatusLineTransition>,
+    effort_observed: bool,
     attachments: AttachmentState,
     placeholder_text: String,
     blocks_direct_input: bool,
@@ -593,6 +625,7 @@ impl ChatComposer {
                 flash: None,
                 context_window_percent: None,
                 context_window_used_tokens: None,
+                context_window_pending: false,
                 collaboration_mode_indicator: None,
                 goal_status_indicator: None,
                 ide_context_active: false,
@@ -601,22 +634,32 @@ impl ChatComposer {
                 status_line_enabled: false,
                 side_conversation_context_label: None,
                 active_agent_label: None,
-                external_editor_key: Some(key_hint::ctrl(KeyCode::Char('g'))),
-                show_transcript_key: Some(key_hint::ctrl(KeyCode::Char('t'))),
+                external_editor_key: default_keymap
+                    .primary_hint(KeymapContext::Global, "open_external_editor"),
+                show_transcript_key: default_keymap
+                    .primary_hint(KeymapContext::Global, "open_transcript"),
                 insert_newline_key: footer_insert_newline_key(
                     &default_keymap.editor.insert_newline,
                     use_shift_enter_hint,
-                ),
-                queue_key: Some(key_hint::plain(KeyCode::Tab)),
-                toggle_shortcuts_key: Some(key_hint::plain(KeyCode::Char('?'))),
-                history_search_key: primary_binding(
-                    &default_keymap.composer.history_search_previous,
-                ),
-                reasoning_down_key: primary_binding(&default_keymap.chat.decrease_reasoning_effort),
-                reasoning_up_key: primary_binding(&default_keymap.chat.increase_reasoning_effort),
+                )
+                .map(ShortcutHint::from),
+                queue_key: default_keymap.primary_hint(KeymapContext::Composer, "queue"),
+                toggle_shortcuts_key: default_keymap
+                    .primary_hint(KeymapContext::Composer, "toggle_shortcuts"),
+                history_search_key: default_keymap
+                    .primary_hint(KeymapContext::Composer, "history_search_previous"),
+                reasoning_down_key: default_keymap
+                    .primary_hint(KeymapContext::Chat, "decrease_reasoning_effort"),
+                reasoning_up_key: default_keymap
+                    .primary_hint(KeymapContext::Chat, "increase_reasoning_effort"),
             },
             has_focus: has_input_focus,
             frame_requester: None,
+            effort_tier: None,
+            effort_animation_style: None,
+            effort_ignition: None,
+            effort_status_line_transition: None,
+            effort_observed: false,
             attachments: AttachmentState::default(),
             placeholder_text,
             blocks_direct_input: false,
@@ -659,14 +702,76 @@ impl ChatComposer {
         self.frame_requester = Some(frame_requester);
     }
 
+    /// Records the effective reasoning tier, captures the outgoing status
+    /// line, and queues the one-shot effects for a genuine Max/Ultra change
+    /// after the initial baseline.
+    pub(crate) fn set_active_reasoning_effort(
+        &mut self,
+        effort: Option<&ReasoningEffort>,
+        animations_enabled: bool,
+    ) -> bool {
+        let tier = EffortTier::from_effort(effort);
+        let is_baseline = !self.effort_observed;
+        self.effort_observed = true;
+        if self.effort_tier == tier {
+            return false;
+        }
+        self.effort_tier = tier;
+        self.effort_ignition = None;
+        self.effort_status_line_transition = None;
+        if let Some(tier) = tier
+            && !is_baseline
+            && animations_enabled
+        {
+            let style = IgnitionStyle::random(self.effort_animation_style);
+            self.effort_ignition = Some(EffortIgnition::new(tier, style));
+            self.effort_animation_style = Some(style);
+            if self.footer.status_line_enabled
+                && !self.footer.plan_mode_nudge_visible
+                && let Some(previous) = passive_footer_status_line(&self.footer_props())
+            {
+                self.effort_status_line_transition =
+                    Some(EffortStatusLineTransition::new(tier, previous));
+            }
+            if let Some(frame_requester) = &self.frame_requester {
+                frame_requester.schedule_frame();
+            }
+        }
+        true
+    }
+
+    /// Establishes the current tier without retaining or starting a one-shot effect.
+    pub(crate) fn set_active_reasoning_effort_baseline(
+        &mut self,
+        effort: Option<&ReasoningEffort>,
+    ) {
+        self.effort_tier = EffortTier::from_effort(effort);
+        self.effort_observed = true;
+        self.effort_ignition = None;
+        self.effort_status_line_transition = None;
+    }
+
     pub fn set_skill_mentions(&mut self, skills: Option<Vec<SkillMetadata>>) {
         self.skills = skills;
+        self.refresh_mentions_v2_popup_candidates();
         self.sync_popups();
     }
 
     pub fn set_plugin_mentions(&mut self, plugins: Option<Vec<PluginCapabilitySummary>>) {
         self.plugins = plugins;
+        self.refresh_mentions_v2_popup_candidates();
         self.sync_popups();
+    }
+
+    /// Refreshes an open mention catalog when skill or plugin metadata changes.
+    fn refresh_mentions_v2_popup_candidates(&mut self) {
+        let ActivePopup::MentionV2(popup) = &mut self.popups.active else {
+            return;
+        };
+        popup.set_candidates(super::mentions_v2::build_search_catalog(
+            self.skills.as_deref(),
+            self.plugins.as_deref(),
+        ));
     }
 
     pub fn set_plugins_command_enabled(&mut self, enabled: bool) {
@@ -751,17 +856,39 @@ impl ChatComposer {
         self.editor_keymap = keymap.editor.clone();
         self.vim_normal_keymap = keymap.vim_normal.clone();
         self.draft.textarea.set_keymap_bindings(keymap);
-        self.footer.external_editor_key = primary_binding(&keymap.app.open_external_editor);
-        self.footer.show_transcript_key = primary_binding(&keymap.app.open_transcript);
-        self.footer.insert_newline_key = footer_insert_newline_key(
-            &keymap.editor.insert_newline,
-            self.footer.use_shift_enter_hint,
-        );
-        self.footer.queue_key = primary_binding(&keymap.composer.queue);
-        self.footer.toggle_shortcuts_key = primary_binding(&keymap.composer.toggle_shortcuts);
-        self.footer.history_search_key = primary_binding(&keymap.composer.history_search_previous);
-        self.footer.reasoning_down_key = primary_binding(&keymap.chat.decrease_reasoning_effort);
-        self.footer.reasoning_up_key = primary_binding(&keymap.chat.increase_reasoning_effort);
+        self.footer.external_editor_key =
+            keymap.primary_hint(KeymapContext::Global, "open_external_editor");
+        self.footer.show_transcript_key =
+            keymap.primary_hint(KeymapContext::Global, "open_transcript");
+        self.footer.insert_newline_key =
+            match keymap.primary_hint(KeymapContext::Editor, "insert_newline") {
+                hint @ Some(ShortcutHint::Chord { .. }) => hint,
+                _ => footer_insert_newline_key(
+                    &keymap.editor.insert_newline,
+                    self.footer.use_shift_enter_hint,
+                )
+                .map(ShortcutHint::from),
+            };
+        self.footer.queue_key = keymap.primary_hint(KeymapContext::Composer, "queue");
+        self.footer.toggle_shortcuts_key =
+            keymap.primary_hint(KeymapContext::Composer, "toggle_shortcuts");
+        self.footer.history_search_key =
+            keymap.primary_hint(KeymapContext::Composer, "history_search_previous");
+        self.footer.reasoning_down_key =
+            keymap.primary_hint(KeymapContext::Chat, "decrease_reasoning_effort");
+        self.footer.reasoning_up_key =
+            keymap.primary_hint(KeymapContext::Chat, "increase_reasoning_effort");
+    }
+
+    /// Return the contexts whose handlers can consume the next composer key.
+    pub(crate) fn keymap_contexts(&self) -> KeymapContextSet {
+        if self.history_search.is_some() {
+            return KeymapContextSet::new(KeymapContext::Composer);
+        }
+        if !self.draft.input_enabled || self.popups.active() {
+            return KeymapContextSet::default();
+        }
+        KeymapContextSet::new(KeymapContext::Composer).with(self.draft.textarea.keymap_context())
     }
 
     pub fn set_collaboration_mode_indicator(
@@ -1232,10 +1359,14 @@ impl ChatComposer {
     }
 
     fn right_footer_line_with_context(&self) -> Line<'static> {
-        let mut line = context_window_line(
-            self.footer.context_window_percent,
-            self.footer.context_window_used_tokens,
-        );
+        let mut line = if self.footer.context_window_pending {
+            Line::default()
+        } else {
+            context_window_line(
+                self.footer.context_window_percent,
+                self.footer.context_window_used_tokens,
+            )
+        };
         if let Some(vim_mode) = self.vim_mode_indicator_span() {
             line.spans.push(" | ".dim());
             line.spans.push(vim_mode);
@@ -3588,7 +3719,7 @@ impl ChatComposer {
                 queue: self.footer.queue_key,
                 insert_newline: self.footer.insert_newline_key,
                 external_editor: self.footer.external_editor_key,
-                edit_previous: Some(key_hint::plain(KeyCode::Esc)),
+                edit_previous: Some(key_hint::plain(KeyCode::Esc).into()),
                 show_transcript: self.footer.show_transcript_key,
                 history_search: self.footer.history_search_key,
                 reasoning_down: self.footer.reasoning_down_key,
@@ -3908,25 +4039,31 @@ impl ChatComposer {
                 .send(AppEvent::StartFileSearch(String::new()));
             self.popups.current_file_query = None;
         } else {
-            self.app_event_tx
-                .send(AppEvent::StartFileSearch(query.clone()));
-            self.popups.current_file_query = Some(query.clone());
+            let new_popup = !matches!(self.popups.active, ActivePopup::MentionV2(_));
+            if new_popup {
+                // A fresh popup has no cached matches, and the app-owned file-search manager can
+                // retain an identical query. Reset it before issuing the query so results arrive.
+                self.app_event_tx
+                    .send(AppEvent::StartFileSearch(String::new()));
+            }
+            if new_popup || self.popups.current_file_query.as_deref() != Some(query.as_str()) {
+                self.app_event_tx
+                    .send(AppEvent::StartFileSearch(query.clone()));
+                self.popups.current_file_query = Some(query.clone());
+            }
         }
-
-        let candidates = super::mentions_v2::build_search_catalog(
-            self.skills.as_deref(),
-            self.plugins.as_deref(),
-        );
 
         match &mut self.popups.active {
             ActivePopup::MentionV2(popup) => {
                 popup.set_query(&query);
-                popup.set_candidates(candidates);
             }
             _ => {
-                let mut popup = MentionV2Popup::new(candidates);
-                popup.set_query(&query);
-                self.popups.active = ActivePopup::MentionV2(popup);
+                let candidates = super::mentions_v2::build_search_catalog(
+                    self.skills.as_deref(),
+                    self.plugins.as_deref(),
+                );
+                self.popups.active =
+                    ActivePopup::MentionV2(MentionV2Popup::new(candidates, &query));
             }
         }
 
@@ -3950,7 +4087,7 @@ impl ChatComposer {
                     description,
                     insert_text: format!("${skill_name}"),
                     search_terms,
-                    path: Some(skill.path_to_skills_md.to_string_lossy().into_owned()),
+                    path: Some(skill.path.to_string_lossy().into_owned()),
                     category_tag: Some("[Skill]".to_string()),
                     sort_rank: 1,
                 });
@@ -4091,6 +4228,10 @@ impl ChatComposer {
         self.footer.context_window_used_tokens = used_tokens;
     }
 
+    pub(crate) fn set_context_window_pending(&mut self, pending: bool) {
+        self.footer.context_window_pending = pending;
+    }
+
     pub(crate) fn set_esc_backtrack_hint(&mut self, show: bool) {
         self.footer.esc_backtrack_hint = show;
         if show {
@@ -4150,6 +4291,7 @@ fn footer_insert_newline_key(
     bindings: &[KeyBinding],
     enhanced_keys_supported: bool,
 ) -> Option<KeyBinding> {
+    let bindings = user_bindings(bindings);
     let shift_enter = key_hint::shift(KeyCode::Enter);
     if enhanced_keys_supported && bindings.contains(&shift_enter) {
         return Some(shift_enter);
@@ -4405,6 +4547,25 @@ impl ChatComposer {
                     } else {
                         None
                     };
+                    let transition_visible = status_line_active
+                        && !self.footer.flash_visible()
+                        && self.footer.hint_override.is_none();
+                    let transition_active = transition_visible
+                        && self
+                            .effort_status_line_transition
+                            .as_ref()
+                            .is_some_and(|transition| !transition.is_finished());
+                    let combined_status_line = if transition_visible
+                        && let Some(transition) = &self.effort_status_line_transition
+                        && !transition.is_finished()
+                    {
+                        transition.render_line(
+                            combined_status_line.as_ref(),
+                            hint_rect.width.saturating_sub(FOOTER_INDENT_COLS as u16),
+                        )
+                    } else {
+                        combined_status_line
+                    };
                     let mut truncated_status_line = if status_line_active {
                         combined_status_line.as_ref().map(|line| {
                             truncate_line_with_ellipsis_if_overflow(line.clone(), available_width)
@@ -4445,6 +4606,8 @@ impl ChatComposer {
                             Some(side_conversation_context_line(label))
                         } else if let Some(line) = self.shell_mode_footer_line() {
                             Some(line)
+                        } else if transition_active {
+                            None
                         } else if status_line_active {
                             let full = self.mode_indicator_line(show_cycle_hint);
                             let compact = self.mode_indicator_line(/*show_cycle_hint*/ false);
@@ -4548,7 +4711,7 @@ impl ChatComposer {
                         }
                     } else if self.footer.flash_visible() {
                         if let Some(flash) = self.footer.flash.as_ref() {
-                            flash.line.render(inset_footer_hint_area(hint_rect), buf);
+                            Widget::render(&flash.line, inset_footer_hint_area(hint_rect), buf);
                         }
                     } else if let Some(items) = active_footer_hint_override {
                         render_footer_hint_items(hint_rect, buf, items);
@@ -4575,20 +4738,34 @@ impl ChatComposer {
                     {
                         mark_underlined_hyperlink(buf, hint_rect, url);
                     }
+                    if transition_visible
+                        && let Some(transition) = &self.effort_status_line_transition
+                        && !transition.is_finished()
+                        && let Some(frame_requester) = &self.frame_requester
+                    {
+                        frame_requester.schedule_frame_in(EFFORT_STATUS_LINE_FRAME_TICK);
+                    }
                 }
             }
         }
         let style = user_message_style();
-        Block::default().style(style).render_ref(composer_rect, buf);
+        Block::default().style(style).render(composer_rect, buf);
         if !remote_images_rect.is_empty() {
             Paragraph::new(self.attachments.remote_image_lines())
                 .style(style)
-                .render_ref(remote_images_rect, buf);
+                .render(remote_images_rect, buf);
         }
         if !textarea_rect.is_empty() {
             let prompt = if self.draft.input_enabled {
                 if self.draft.is_bash_mode {
                     Span::from("!").light_red().bold()
+                } else if let Some(tier) = self.effort_tier {
+                    let charge = self
+                        .effort_ignition
+                        .as_ref()
+                        .map(EffortIgnition::charge_alpha)
+                        .unwrap_or(1.0);
+                    tier.prompt(charge)
                 } else {
                     "›".bold()
                 }
@@ -4649,12 +4826,36 @@ impl ChatComposer {
             };
             if !textarea_rect.is_empty() {
                 let placeholder = Span::from(text).dim();
-                Line::from(vec![placeholder])
-                    .render_ref(textarea_rect.inner(Margin::new(0, 0)), buf);
+                Line::from(vec![placeholder]).render(textarea_rect.inner(Margin::new(0, 0)), buf);
+            }
+        }
+        if matches!(self.popups.active, ActivePopup::None)
+            && let Some(ignition) = &self.effort_ignition
+            && !ignition.is_finished()
+        {
+            let protected_top = if remote_images_rect.is_empty() {
+                textarea_rect.y
+            } else {
+                remote_images_rect.y
+            };
+            let protected = Rect::new(
+                composer_rect.x,
+                protected_top,
+                composer_rect.width,
+                textarea_rect.bottom().saturating_sub(protected_top),
+            );
+            if ignition.render(composer_rect, protected, buf)
+                && let Some(frame_requester) = &self.frame_requester
+            {
+                frame_requester.schedule_frame_in(IGNITION_FRAME_TICK);
             }
         }
     }
 }
+
+#[cfg(test)]
+#[path = "chat_composer_effort_tests.rs"]
+mod effort_tests;
 
 #[cfg(test)]
 mod tests {
@@ -4679,7 +4880,7 @@ mod tests {
     use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::mpsc::unbounded_channel;
 
-    fn new_test_composer() -> (ChatComposer, UnboundedReceiver<AppEvent>) {
+    pub(super) fn new_test_composer() -> (ChatComposer, UnboundedReceiver<AppEvent>) {
         let (tx, rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         (
@@ -4692,6 +4893,50 @@ mod tests {
             ),
             rx,
         )
+    }
+
+    #[test]
+    fn shortcut_footer_displays_configured_chords() {
+        use codex_config::types::KeybindingSpec;
+        use codex_config::types::KeybindingsSpec;
+        use codex_config::types::TuiKeymap;
+
+        let mut config = TuiKeymap::default();
+        config.global.open_external_editor = Some(KeybindingsSpec::One(KeybindingSpec(
+            "ctrl-g ctrl-g".to_string(),
+        )));
+        config.editor.insert_newline = Some(KeybindingsSpec::One(KeybindingSpec(
+            "ctrl-x enter".to_string(),
+        )));
+        let keymap = RuntimeKeymap::from_config(&config).expect("valid composer chords");
+        let (mut composer, _rx) = new_test_composer();
+        composer.set_keymap_bindings(&keymap);
+        composer.footer.mode = FooterMode::ShortcutOverlay;
+
+        let hints = composer.footer_props().key_hints;
+        assert_eq!(
+            hints.external_editor,
+            Some(ShortcutHint::Chord {
+                prefix: key_hint::ctrl(KeyCode::Char('g')),
+                completion: key_hint::ctrl(KeyCode::Char('g')),
+            })
+        );
+        assert_eq!(
+            hints.insert_newline,
+            Some(ShortcutHint::Chord {
+                prefix: key_hint::ctrl(KeyCode::Char('x')),
+                completion: key_hint::plain(KeyCode::Enter),
+            })
+        );
+
+        snapshot_composer_state(
+            "footer_mode_configured_key_chords",
+            /*enhanced_keys_supported*/ false,
+            |composer| {
+                composer.set_keymap_bindings(&keymap);
+                composer.footer.mode = FooterMode::ShortcutOverlay;
+            },
+        );
     }
 
     #[test]
@@ -4867,7 +5112,7 @@ mod tests {
         );
     }
 
-    fn snapshot_composer_state_with_width<F>(
+    pub(super) fn snapshot_composer_state_with_width<F>(
         name: &str,
         width: u16,
         enhanced_keys_supported: bool,
@@ -6481,6 +6726,7 @@ mod tests {
         composer.set_plugin_mentions(Some(vec![PluginCapabilitySummary {
             config_name: "sample@test".to_string(),
             display_name: "Sample Plugin".to_string(),
+            plugin_namespace: None,
             description: None,
             has_skills: true,
             mcp_server_names: vec!["sample".to_string()],
@@ -6504,10 +6750,9 @@ mod tests {
             short_description: None,
             interface: None,
             dependencies: None,
-            policy: None,
-            path_to_skills_md: test_path_buf(&format!("/tmp/{name}/SKILL.md")).abs(),
+            path: test_path_buf(&format!("/tmp/{name}/SKILL.md")).abs(),
             scope: crate::test_support::skill_scope_user(),
-            plugin_id: None,
+            enabled: true,
         }
     }
 
@@ -6534,6 +6779,7 @@ mod tests {
         PluginCapabilitySummary {
             config_name: format!("{name}@test"),
             display_name: name.to_string(),
+            plugin_namespace: None,
             description: Some(description.to_string()),
             has_skills: false,
             mcp_server_names: vec![name.to_string()],
@@ -7155,10 +7401,9 @@ mod tests {
             short_description: None,
             interface: None,
             dependencies: None,
-            policy: None,
-            path_to_skills_md: skill_path.clone(),
+            path: skill_path.clone(),
             scope: crate::test_support::skill_scope_user(),
-            plugin_id: None,
+            enabled: true,
         }]));
 
         let ActivePopup::Skill(popup) = &composer.popups.active else {
@@ -7194,18 +7439,20 @@ mod tests {
                 short_description: None,
                 icon_small: None,
                 icon_large: None,
+                icon_small_url: None,
+                icon_large_url: None,
                 brand_color: None,
                 default_prompt: None,
             }),
             dependencies: None,
-            policy: None,
-            path_to_skills_md: skill_path.clone(),
+            path: skill_path.clone(),
             scope: crate::test_support::skill_scope_repo(),
-            plugin_id: None,
+            enabled: true,
         }]));
         composer.set_plugin_mentions(Some(vec![PluginCapabilitySummary {
             config_name: "google-calendar@debug".to_string(),
             display_name: "Google Calendar".to_string(),
+            plugin_namespace: None,
             description: Some(
                 "Connect Google Calendar for scheduling, availability, and event management."
                     .to_string(),
@@ -7258,6 +7505,7 @@ mod tests {
                 composer.set_plugin_mentions(Some(vec![PluginCapabilitySummary {
                     config_name: "sample@test".to_string(),
                     display_name: "Sample Plugin".to_string(),
+                    plugin_namespace: None,
                     description: Some(
                         "Plugin that includes the Figma MCP server and Skills for common workflows"
                             .to_string(),
@@ -7283,6 +7531,7 @@ mod tests {
                 composer.set_plugin_mentions(Some(vec![PluginCapabilitySummary {
                     config_name: "sample@test".to_string(),
                     display_name: "Sample Plugin".to_string(),
+                    plugin_namespace: None,
                     description: Some("Plugin with skills and an MCP server".to_string()),
                     has_skills: true,
                     mcp_server_names: vec!["sample".to_string()],
@@ -7290,6 +7539,73 @@ mod tests {
                 }]));
             },
         );
+    }
+
+    #[test]
+    fn bare_unified_mention_resets_an_inherited_file_search() {
+        let (mut composer, mut rx) = new_test_composer();
+        composer.set_mentions_v2_enabled(/*enabled*/ true);
+
+        composer.insert_str("@");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::StartFileSearch(query)) if query.is_empty()
+        ));
+
+        composer.insert_str("s");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::StartFileSearch(query)) if query == "s"
+        ));
+    }
+
+    #[test]
+    fn reopening_identical_unified_mention_restarts_file_search() {
+        let (mut composer, mut rx) = new_test_composer();
+        composer.set_mentions_v2_enabled(/*enabled*/ true);
+        composer.set_text_content("@foo @foo".to_string(), Vec::new(), Vec::new());
+        composer.draft.textarea.set_cursor("@f".len());
+        composer.sync_popups();
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::StartFileSearch(query)) if query.is_empty()
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::StartFileSearch(query)) if query == "foo"
+        ));
+
+        composer.on_file_search_result("foo".to_string(), Vec::new());
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(composer.popups.active, ActivePopup::None));
+
+        composer.draft.textarea.set_cursor("@foo @foo".len());
+        composer.sync_popups();
+        assert!(matches!(composer.popups.active, ActivePopup::MentionV2(_)));
+        let queries = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|event| match event {
+                AppEvent::StartFileSearch(query) => Some(query),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(queries, vec![String::new(), "foo".to_string()]);
+    }
+
+    #[test]
+    fn restored_unified_mention_restarts_file_search() {
+        let (mut composer, mut rx) = new_test_composer();
+        composer.set_mentions_v2_enabled(/*enabled*/ true);
+
+        composer.set_text_content("@foo".to_string(), Vec::new(), Vec::new());
+
+        assert!(matches!(composer.popups.active, ActivePopup::MentionV2(_)));
+        let queries = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|event| match event {
+                AppEvent::StartFileSearch(query) => Some(query),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(queries, vec![String::new(), "foo".to_string()]);
     }
 
     #[test]
@@ -7310,18 +7626,20 @@ mod tests {
                         short_description: None,
                         icon_small: None,
                         icon_large: None,
+                        icon_small_url: None,
+                        icon_large_url: None,
                         brand_color: None,
                         default_prompt: None,
                     }),
                     dependencies: None,
-                    policy: None,
-                    path_to_skills_md: test_path_buf("/tmp/repo/google-calendar/SKILL.md").abs(),
+                    path: test_path_buf("/tmp/repo/google-calendar/SKILL.md").abs(),
                     scope: crate::test_support::skill_scope_repo(),
-                    plugin_id: None,
+                    enabled: true,
                 }]));
                 composer.set_plugin_mentions(Some(vec![PluginCapabilitySummary {
                 config_name: "google-calendar@debug".to_string(),
                 display_name: "Google Calendar".to_string(),
+                plugin_namespace: None,
                 description: Some(
                     "Connect Google Calendar for scheduling, availability, and event management."
                         .to_string(),
@@ -7890,6 +8208,7 @@ mod tests {
             composer.set_plugin_mentions(Some(vec![PluginCapabilitySummary {
                 config_name: "sample@test".to_string(),
                 display_name: "sample".to_string(),
+                plugin_namespace: None,
                 description: None,
                 has_skills: true,
                 mcp_server_names: vec!["sample".to_string()],

@@ -88,6 +88,7 @@ async fn responses_stream_includes_subagent_header_on_review() {
         websocket_connect_timeout_ms: None,
         requires_openai_auth: false,
         supports_websockets: false,
+        supports_standalone_web_search: false,
     };
 
     let codex_home = TempDir::new().expect("failed to create TempDir");
@@ -130,7 +131,6 @@ async fn responses_stream_includes_subagent_header_on_review() {
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
-        /*item_ids_enabled*/ false,
         /*concurrent_reasoning_summaries_enabled*/ false,
         /*attestation_provider*/ None,
         config.http_client_factory(),
@@ -224,6 +224,7 @@ async fn responses_stream_includes_subagent_header_on_other() {
         websocket_connect_timeout_ms: None,
         requires_openai_auth: false,
         supports_websockets: false,
+        supports_standalone_web_search: false,
     };
 
     let codex_home = TempDir::new().expect("failed to create TempDir");
@@ -266,7 +267,6 @@ async fn responses_stream_includes_subagent_header_on_other() {
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
-        /*item_ids_enabled*/ false,
         /*concurrent_reasoning_summaries_enabled*/ false,
         /*attestation_provider*/ None,
         config.http_client_factory(),
@@ -341,6 +341,7 @@ async fn responses_respects_model_info_overrides_from_config() {
         websocket_connect_timeout_ms: None,
         requires_openai_auth: false,
         supports_websockets: false,
+        supports_standalone_web_search: false,
     };
 
     let codex_home = TempDir::new().expect("failed to create TempDir");
@@ -387,7 +388,6 @@ async fn responses_respects_model_info_overrides_from_config() {
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
         /*beta_features_header*/ None,
-        /*item_ids_enabled*/ false,
         /*concurrent_reasoning_summaries_enabled*/ false,
         /*attestation_provider*/ None,
         config.http_client_factory(),
@@ -463,8 +463,8 @@ async fn responses_stream_includes_turn_metadata_header_for_git_workspace_e2e() 
     test.submit_turn("hello")
         .await
         .expect("submit first turn prompt");
-    let initial_header = first_request
-        .single_request()
+    let initial_request = first_request.single_request();
+    let initial_header = initial_request
         .header("x-codex-turn-metadata")
         .expect("x-codex-turn-metadata header should be present");
     let initial_parsed: serde_json::Value =
@@ -491,6 +491,24 @@ async fn responses_stream_includes_turn_metadata_header_for_git_workspace_e2e() 
             .get("sandbox")
             .and_then(serde_json::Value::as_str),
         Some("none")
+    );
+    assert_eq!(
+        initial_parsed
+            .get("sandbox_mode")
+            .and_then(serde_json::Value::as_str),
+        Some("danger-full-access")
+    );
+    let body_metadata: serde_json::Value = serde_json::from_str(
+        initial_request.body_json()["client_metadata"]["x-codex-turn-metadata"]
+            .as_str()
+            .expect("request body should include x-codex-turn-metadata"),
+    )
+    .expect("body x-codex-turn-metadata should be valid JSON");
+    assert_eq!(
+        body_metadata
+            .get("sandbox_mode")
+            .and_then(serde_json::Value::as_str),
+        Some("danger-full-access")
     );
     assert_eq!(
         initial_parsed

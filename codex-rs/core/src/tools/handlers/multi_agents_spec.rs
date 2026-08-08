@@ -517,7 +517,7 @@ fn wait_output_schema_v2() -> Value {
         "properties": {
             "message": {
                 "type": "string",
-                "description": "Brief wait summary without the agent's final content."
+                "description": "Brief wait summary without the agent's final content, including any timeout adjustment."
             },
             "timed_out": {
                 "type": "boolean",
@@ -548,7 +548,8 @@ fn create_collab_input_items_schema() -> JsonSchema {
         (
             "type".to_string(),
             JsonSchema::string(Some(
-                "Input item type: text, image, local_image, skill, or mention.".to_string(),
+                "Input item type: text, image, local_image, audio, local_audio, skill, or mention."
+                    .to_string(),
             )),
         ),
         (
@@ -560,9 +561,13 @@ fn create_collab_input_items_schema() -> JsonSchema {
             JsonSchema::string(Some("Image URL when type is image.".to_string())),
         ),
         (
+            "audio_url".to_string(),
+            JsonSchema::string(Some("Audio data URL when type is audio.".to_string())),
+        ),
+        (
             "path".to_string(),
             JsonSchema::string(Some(
-                "Path when type is local_image/skill, or structured mention target such as app://<connector-id> or plugin://<plugin-name>@<marketplace-name> when type is mention."
+                "Path when type is local_image/local_audio/skill, or structured mention target such as app://<connector-id> or plugin://<plugin-name>@<marketplace-name> when type is mention."
                     .to_string(),
             )),
         ),
@@ -635,7 +640,7 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
         (
             "agent_type".to_string(),
             JsonSchema::string(Some(format!(
-                "Agent type override for the new agent. Omit unless explicitly asked. Set `fork_turns` to `none` or a positive integer when an explicit override is needed.\n{agent_type_description}"
+                "Agent type override for the new agent. Omit unless explicitly asked. The selected role applies regardless of how much parent history is inherited.\n{agent_type_description}"
             ))),
         ),
         (

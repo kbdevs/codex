@@ -2,6 +2,7 @@ mod delegate;
 mod execute_handler;
 pub(crate) mod execute_spec;
 mod response_adapter;
+mod telemetry;
 mod wait_handler;
 pub(crate) mod wait_spec;
 
@@ -17,17 +18,18 @@ use codex_code_mode::CodeModeSessionProvider;
 use codex_code_mode::CodeModeToolKind;
 use codex_code_mode::RuntimeResponse;
 use codex_protocol::models::FunctionCallOutputContentItem;
+use futures::future::join_all;
 use serde_json::Value as JsonValue;
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
 
+use crate::config::CodeModeConfig;
 use crate::function_tool::FunctionCallError;
 use crate::original_image_detail::can_request_original_image_detail;
 use crate::original_image_detail::sanitize_original_image_detail as sanitize_image_detail_items;
 use crate::session::session::Session;
 use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
-use crate::tools::ToolRouter;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolPayload;
@@ -38,6 +40,7 @@ use crate::tools::router::ToolCallSource;
 use crate::unified_exec::resolve_max_tokens;
 use codex_protocol::openai_models::ToolMode;
 use codex_tools::ToolName;
+use codex_utils_audio::estimate_audio_token_count;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text_content_items_with_policy;
 use codex_utils_output_truncation::truncate_function_output_items_with_policy;
@@ -52,9 +55,9 @@ pub(crate) const PUBLIC_TOOL_NAME: &str = codex_code_mode::PUBLIC_TOOL_NAME;
 pub(crate) const WAIT_TOOL_NAME: &str = codex_code_mode::WAIT_TOOL_NAME;
 pub(crate) const DEFAULT_WAIT_YIELD_TIME_MS: u64 = codex_code_mode::DEFAULT_WAIT_YIELD_TIME_MS;
 
-/// Returns true for the un-namespaced code-mode `exec` tool.
+/// Returns true for the code-mode `exec` tool in the default namespace.
 pub(crate) fn is_exec_tool_name(tool_name: &ToolName) -> bool {
-    tool_name.namespace.is_none() && tool_name.name == PUBLIC_TOOL_NAME
+    tool_name.is_default_namespace() && tool_name.name == PUBLIC_TOOL_NAME
 }
 
 #[derive(Clone)]
@@ -66,19 +69,49 @@ pub(crate) struct ExecContext {
 pub(crate) struct CodeModeService {
     session: OnceCell<Arc<dyn CodeModeSession>>,
     session_provider: Arc<dyn CodeModeSessionProvider>,
+    availability: Result<(), String>,
     dispatch_broker: Arc<CodeModeDispatchBroker>,
+    default_exec_yield_time_ms: u64,
     shutting_down: AtomicBool,
+    unavailable_warning_emitted: AtomicBool,
 }
 
 impl CodeModeService {
-    pub(crate) fn new(session_provider: Arc<dyn CodeModeSessionProvider>) -> Self {
+    pub(crate) fn new(
+        session_provider: Arc<dyn CodeModeSessionProvider>,
+        config: &CodeModeConfig,
+    ) -> Self {
         let dispatch_broker = Arc::new(CodeModeDispatchBroker::new());
+        let availability = session_provider.availability();
         Self {
             session: OnceCell::new(),
             session_provider,
+            availability,
             dispatch_broker,
+            default_exec_yield_time_ms: config.default_exec_yield_time_ms,
             shutting_down: AtomicBool::new(false),
+            unavailable_warning_emitted: AtomicBool::new(false),
         }
+    }
+
+    pub(crate) fn is_available(&self) -> bool {
+        self.availability.is_ok()
+    }
+
+    pub(crate) fn take_unavailable_warning(&self, tool_mode: ToolMode) -> Option<String> {
+        let error = self.availability.as_ref().err()?;
+        let behavior = match tool_mode {
+            ToolMode::Direct => "Falling back to direct tools",
+            ToolMode::CodeMode | ToolMode::CodeModeOnly => "Code mode will fail closed",
+        };
+        (!self
+            .unavailable_warning_emitted
+            .swap(true, Ordering::Relaxed))
+        .then(|| {
+            format!(
+                "Code Mode is unavailable because {error}. {behavior}; enable `features.code_mode_host` and install `codex-code-mode-host`."
+            )
+        })
     }
 
     pub(crate) fn session_provider(&self) -> Arc<dyn CodeModeSessionProvider> {
@@ -87,8 +120,11 @@ impl CodeModeService {
 
     pub(crate) async fn execute(
         &self,
-        request: codex_code_mode::ExecuteRequest,
+        mut request: codex_code_mode::ExecuteRequest,
     ) -> Result<codex_code_mode::StartedCell, String> {
+        request
+            .yield_time_ms
+            .get_or_insert(self.default_exec_yield_time_ms);
         self.session().await?.execute(request).await
     }
 
@@ -104,6 +140,23 @@ impl CodeModeService {
         cell_id: CellId,
     ) -> Result<codex_code_mode::WaitOutcome, String> {
         self.session().await?.terminate(cell_id).await
+    }
+
+    pub(crate) async fn interrupt_active_cells(&self) {
+        let Some(session) = self.session.get() else {
+            return;
+        };
+        join_all(
+            self.dispatch_broker
+                .active_cell_ids()
+                .into_iter()
+                .map(|cell_id| async move {
+                    if let Err(error) = session.terminate(cell_id.clone()).await {
+                        tracing::warn!(%cell_id, %error, "failed to terminate interrupted code-mode cell");
+                    }
+                }),
+        )
+        .await;
     }
 
     pub(crate) async fn shutdown(&self) -> Result<(), String> {
@@ -135,7 +188,6 @@ impl CodeModeService {
         &self,
         session: &Arc<Session>,
         step_context: Arc<StepContext>,
-        router: Arc<ToolRouter>,
         tracker: SharedTurnDiffTracker,
     ) -> Option<CodeModeDispatchWorker> {
         let turn = &step_context.turn;
@@ -150,7 +202,7 @@ impl CodeModeService {
         };
         Some(
             self.dispatch_broker
-                .start_turn_worker(exec, router, step_context, tracker),
+                .start_turn_worker(exec, step_context, tracker),
         )
     }
 
@@ -269,11 +321,11 @@ fn truncate_code_mode_result(
         return truncated_items;
     }
 
-    truncate_function_output_items_with_policy(&items, policy)
+    truncate_function_output_items_with_policy(&items, policy, estimate_audio_token_count)
 }
 
 async fn call_nested_tool(
-    _exec: ExecContext,
+    exec: ExecContext,
     tool_runtime: ToolCallRuntime,
     invocation: CodeModeNestedToolCall,
     cancellation_token: CancellationToken,
@@ -297,10 +349,20 @@ async fn call_nested_tool(
     };
 
     let call = ToolCall {
-        tool_name,
+        tool_name: tool_name.with_default_namespace(),
         call_id: format!("{PUBLIC_TOOL_NAME}-{}", uuid::Uuid::new_v4()),
         payload,
+        encrypted_function_args: None,
     };
+    exec.session
+        .services
+        .analytics_events_client
+        .track_code_mode_tool_call(codex_analytics::CodeModeToolCallFact::ChildStarted {
+            thread_id: exec.session.thread_id.to_string(),
+            turn_id: exec.turn.sub_id.clone(),
+            call_id: call.call_id.clone(),
+            cell_id: cell_id.to_string(),
+        });
     let result = tool_runtime
         .handle_tool_call_with_source(
             call,
@@ -359,17 +421,10 @@ fn build_freeform_tool_payload(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use super::CodeModeService;
     use super::build_nested_tool_payload;
     use super::truncate_code_mode_result;
     use crate::tools::context::ToolPayload;
     use codex_code_mode::CodeModeToolKind;
-    use codex_code_mode::ExecuteRequest;
-    use codex_code_mode::FunctionCallOutputContentItem as CodeModeOutputContentItem;
-    use codex_code_mode::ProcessOwnedCodeModeSessionProvider;
-    use codex_code_mode::RuntimeResponse;
     use codex_protocol::models::FunctionCallOutputContentItem;
     use codex_tools::ToolName;
     use serde_json::json;
@@ -427,38 +482,17 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn missing_process_host_falls_back_to_in_process_session() {
-        let service = CodeModeService::new(Arc::new(
-            ProcessOwnedCodeModeSessionProvider::with_host_program(
-                "codex-code-mode-host-does-not-exist".into(),
-            ),
-        ));
-
-        let response = service
-            .execute(ExecuteRequest {
-                tool_call_id: "call-1".to_string(),
-                enabled_tools: Vec::new(),
-                source: "text('fallback')".to_string(),
-                yield_time_ms: None,
-                max_output_tokens: None,
-            })
-            .await
-            .expect("missing host should fall back to an in-process session")
-            .initial_response()
-            .await
-            .expect("read fallback response");
+    #[test]
+    fn over_budget_audio_output_is_omitted() {
+        let items = vec![FunctionCallOutputContentItem::InputAudio {
+            audio_url: format!("data:audio/wav;base64,{}", "A".repeat(100)),
+        }];
 
         assert_eq!(
-            response,
-            RuntimeResponse::Result {
-                cell_id: codex_code_mode::CellId::new("1".to_string()),
-                content_items: vec![CodeModeOutputContentItem::InputText {
-                    text: "fallback".to_string(),
-                }],
-                error_text: None,
-            }
+            truncate_code_mode_result(items, Some(5)),
+            vec![FunctionCallOutputContentItem::InputText {
+                text: "[omitted 1 audio items ...]".to_string(),
+            }]
         );
-        service.shutdown().await.expect("shutdown service");
     }
 }

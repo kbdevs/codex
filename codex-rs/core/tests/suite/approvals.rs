@@ -8,6 +8,7 @@ use codex_core::config::Constrained;
 use codex_core::config::ThreadStoreConfig;
 use codex_core::sandboxing::SandboxPermissions;
 use codex_features::Feature;
+use codex_models_manager::bundled_models_response;
 use codex_protocol::approvals::NetworkApprovalProtocol;
 use codex_protocol::approvals::NetworkPolicyAmendment;
 use codex_protocol::approvals::NetworkPolicyRuleAction;
@@ -803,12 +804,21 @@ async fn expect_patch_approval(
     test: &TestCodex,
     expected_call_id: &str,
 ) -> ApplyPatchApprovalRequestEvent {
-    let event = wait_for_event(&test.codex, |event| {
-        matches!(
-            event,
-            EventMsg::ApplyPatchApprovalRequest(_) | EventMsg::TurnComplete(_)
-        )
-    })
+    let event = wait_for_event_with_timeout(
+        &test.codex,
+        |event| {
+            matches!(
+                event,
+                EventMsg::ApplyPatchApprovalRequest(_)
+                    | EventMsg::ExecApprovalRequest(_)
+                    | EventMsg::Error(_)
+                    | EventMsg::TurnAborted(_)
+                    | EventMsg::ShutdownComplete
+                    | EventMsg::TurnComplete(_)
+            )
+        },
+        Duration::from_secs(15),
+    )
     .await;
 
     match event {
@@ -1005,11 +1015,11 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5.2"),
             outcome: Outcome::ExecApproval {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("blocked by distinctive approval policy"),
                 expected_reason: None,
             },
             expectation: Expectation::CommandFailure {
-                output_contains: "rejected by user",
+                output_contains: "blocked by distinctive approval policy",
             },
         },
         ScenarioSpec {
@@ -1023,7 +1033,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5.2"),
             outcome: Outcome::ExecApproval {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
             },
             expectation: Expectation::CommandFailure {
@@ -1041,7 +1051,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5.2"),
             outcome: Outcome::ExecApprovalWithAmendment {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
                 expected_execpolicy_amendment: Some(&["echo", "known-safe-escalation"]),
             },
@@ -1084,7 +1094,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5.2"),
             outcome: Outcome::ExecApproval {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
             },
             expectation: Expectation::CommandFailure {
@@ -1105,7 +1115,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5.2"),
             outcome: Outcome::ExecApproval {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
             },
             expectation: Expectation::CommandFailure {
@@ -1126,7 +1136,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5.2"),
             outcome: Outcome::ExecApprovalWithAmendment {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
                 expected_execpolicy_amendment: None,
             },
@@ -1304,7 +1314,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: None,
             outcome: Outcome::ExecApproval {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
             },
             expectation: Expectation::FileNotCreated {
@@ -1436,7 +1446,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5.4"),
             outcome: Outcome::PatchApproval {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
             },
             expectation: Expectation::FileNotCreated {
@@ -1742,7 +1752,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![Feature::UnifiedExec],
             model_override: None,
             outcome: Outcome::ExecApproval {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
             },
             expectation: Expectation::CommandFailure {
@@ -1761,7 +1771,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![Feature::UnifiedExec],
             model_override: None,
             outcome: Outcome::ExecApproval {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
             },
             expectation: Expectation::CommandFailure {
@@ -1780,7 +1790,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![Feature::UnifiedExec],
             model_override: None,
             outcome: Outcome::ExecApproval {
-                decision: ReviewDecision::Denied,
+                decision: ReviewDecision::denied("rejected by user"),
                 expected_reason: None,
             },
             expectation: Expectation::CommandFailure {
@@ -1848,8 +1858,10 @@ async fn run_scenario(scenario: &ScenarioSpec) -> Result<()> {
     let model = model_override.unwrap_or("gpt-5.4");
     let policy_src = scenario.action.policy_src();
     let thread_store_id = format!("approval-scenario-{}", scenario.name);
+    let model_catalog = bundled_models_response()?;
 
     let mut builder = test_codex().with_model(model).with_config(move |config| {
+        config.model_catalog = Some(model_catalog);
         // These scenarios assert tool behavior, not rollout persistence.
         config.experimental_thread_store = ThreadStoreConfig::InMemory {
             id: thread_store_id,
@@ -2123,6 +2135,127 @@ async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() 
 
     assert!(fs::read_to_string(&path)?.contains("after"));
     let _ = fs::remove_file(path);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
+async fn approving_execpolicy_amendment_does_not_reinject_permissions_instructions() -> Result<()> {
+    assert_execpolicy_amendment_context(PermissionsInstructionsExpectation::Included).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
+async fn approving_execpolicy_amendment_is_reported_when_permissions_are_disabled() -> Result<()> {
+    assert_execpolicy_amendment_context(PermissionsInstructionsExpectation::Omitted).await
+}
+
+#[derive(Clone, Copy)]
+enum PermissionsInstructionsExpectation {
+    Included,
+    Omitted,
+}
+
+async fn assert_execpolicy_amendment_context(
+    expectation: PermissionsInstructionsExpectation,
+) -> Result<()> {
+    let (include_permissions_instructions, expected_permissions_block_count) = match expectation {
+        PermissionsInstructionsExpectation::Included => (true, 1),
+        PermissionsInstructionsExpectation::Omitted => (false, 0),
+    };
+    let server = start_mock_server().await;
+    let approval_policy = AskForApproval::OnRequest;
+    let sandbox_policy = SandboxPolicy::new_read_only_policy();
+    let sandbox_policy_for_config = sandbox_policy.clone();
+    let mut builder = test_codex()
+        .with_model_info_override("gpt-5.4", |model_info| {
+            model_info.model_messages = None;
+        })
+        .with_config(move |config| {
+            config.include_permissions_instructions = include_permissions_instructions;
+            config.permissions.approval_policy = Constrained::allow_any(approval_policy);
+            config
+                .features
+                .disable(Feature::DeferredExecutor)
+                .expect("test config should allow feature update");
+            config
+                .set_legacy_sandbox_policy(sandbox_policy_for_config)
+                .expect("set sandbox policy");
+        });
+    let test = builder.build(&server).await?;
+
+    let call_id = "permissions-prefix";
+    let (event, expected_command) = ActionKind::RunCommand {
+        command: "touch permissions-prefix.txt",
+    }
+    .prepare(
+        &test,
+        &server,
+        call_id,
+        SandboxPermissions::RequireEscalated,
+    )
+    .await?;
+    let expected_command =
+        expected_command.expect("execpolicy amendment scenario should produce a shell command");
+    let expected_execpolicy_amendment = ExecPolicyAmendment::new(vec![
+        "touch".to_string(),
+        "permissions-prefix.txt".to_string(),
+    ]);
+
+    let _ = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-permissions-prefix-1"),
+            event,
+            ev_completed("resp-permissions-prefix-1"),
+        ]),
+    )
+    .await;
+    let follow_up = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-permissions-prefix", "done"),
+            ev_completed("resp-permissions-prefix-2"),
+        ]),
+    )
+    .await;
+
+    submit_turn(&test, "permissions-prefix", approval_policy, sandbox_policy).await?;
+
+    let approval = expect_exec_approval(&test, expected_command.as_str()).await;
+    assert_eq!(
+        approval.proposed_execpolicy_amendment,
+        Some(expected_execpolicy_amendment.clone())
+    );
+    test.codex
+        .submit(Op::ExecApproval {
+            id: approval.effective_approval_id(),
+            turn_id: None,
+            decision: ReviewDecision::ApprovedExecpolicyAmendment {
+                proposed_execpolicy_amendment: expected_execpolicy_amendment,
+            },
+        })
+        .await?;
+    wait_for_completion(&test).await;
+
+    let developer_messages = follow_up.single_request().message_input_texts("developer");
+    let permissions_block_count = developer_messages
+        .iter()
+        .map(|message| message.matches("<permissions instructions>").count())
+        .sum::<usize>();
+    assert_eq!(
+        permissions_block_count, expected_permissions_block_count,
+        "saving an execpolicy amendment must respect the full permissions rendering mode: \
+         {developer_messages:#?}"
+    );
+    assert!(
+        developer_messages
+            .iter()
+            .any(|message| message.contains("Approved command prefix saved:")
+                && message.contains(r#"["touch", "permissions-prefix.txt"]"#)),
+        "expected developer message documenting saved rule, got: {developer_messages:?}"
+    );
 
     Ok(())
 }
@@ -3584,6 +3717,7 @@ allow_local_binding = true
                 pattern: format!("{}/**/*.env", test.config.cwd.as_path().display()),
             },
             access: FileSystemAccessMode::Deny,
+            missing_path_behavior: None,
         });
     assert!(
         file_system_sandbox_policy.has_denied_read_restrictions(),
@@ -3865,7 +3999,7 @@ allow_local_binding = true
         .submit(Op::ExecApproval {
             id: approval.effective_approval_id(),
             turn_id: None,
-            decision: ReviewDecision::Denied,
+            decision: ReviewDecision::denied("rejected by user"),
         })
         .await?;
     wait_for_completion(&test).await;
@@ -3937,7 +4071,7 @@ async fn compound_command_with_one_safe_command_still_requires_approval() -> Res
         .submit(Op::ExecApproval {
             id: approval.effective_approval_id(),
             turn_id: None,
-            decision: ReviewDecision::Denied,
+            decision: ReviewDecision::denied("rejected by user"),
         })
         .await?;
     wait_for_completion(&test).await;

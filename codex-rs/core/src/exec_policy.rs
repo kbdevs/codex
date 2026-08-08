@@ -7,7 +7,6 @@ use arc_swap::ArcSwap;
 
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
 use codex_execpolicy::AmendError;
 use codex_execpolicy::Decision;
 use codex_execpolicy::Error as ExecPolicyRuleError;
@@ -41,6 +40,10 @@ use codex_shell_command::bash::parse_shell_lc_single_command_prefix;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use shlex::try_join as shlex_try_join;
 
+mod model_policy;
+
+pub(crate) use model_policy::AllowPrefixRules;
+
 const PROMPT_CONFLICT_REASON: &str =
     "approval required by policy, but AskForApproval is set to Never";
 const REJECT_SANDBOX_APPROVAL_REASON: &str =
@@ -50,53 +53,95 @@ const REJECT_RULES_APPROVAL_REASON: &str =
 const RULES_DIR_NAME: &str = "rules";
 const RULE_EXTENSION: &str = "rules";
 const DEFAULT_POLICY_FILE: &str = "default.rules";
-static BANNED_PREFIX_SUGGESTIONS: &[&[&str]] = &[
-    &["python3"],
-    &["python3", "-"],
-    &["python3", "-c"],
-    &["python"],
-    &["python", "-"],
-    &["python", "-c"],
-    &["py"],
-    &["py", "-3"],
-    &["pythonw"],
-    &["pyw"],
-    &["pypy"],
-    &["pypy3"],
-    &["git"],
-    &["bash"],
-    &["bash", "-lc"],
-    &["sh"],
-    &["sh", "-c"],
-    &["sh", "-lc"],
-    &["zsh"],
-    &["zsh", "-lc"],
-    &["/bin/zsh"],
-    &["/bin/zsh", "-lc"],
+pub(crate) static BANNED_PREFIX_SUGGESTIONS: &[&[&str]] = &[
     &["/bin/bash"],
+    &["/bin/bash", "-c"],
     &["/bin/bash", "-lc"],
-    &["pwsh"],
-    &["pwsh", "-Command"],
-    &["pwsh", "-c"],
+    &["/bin/sh"],
+    &["/bin/sh", "-c"],
+    &["/bin/sh", "-lc"],
+    &["/bin/zsh"],
+    &["/bin/zsh", "-c"],
+    &["/bin/zsh", "-lc"],
+    &["Rscript"],
+    &["bash"],
+    &["bash", "-c"],
+    &["bash", "-lc"],
+    &["bun"],
+    &["bun", "-e"],
+    &["bun", "run"],
+    &["cmd"],
+    &["cmd", "/c"],
+    &["cmd", "/k"],
+    &["cmd.exe"],
+    &["cmd.exe", "/c"],
+    &["cmd.exe", "/k"],
+    &["dash"],
+    &["dash", "-c"],
+    &["deno"],
+    &["deno", "eval"],
+    &["env"],
+    &["fish"],
+    &["fish", "-c"],
+    &["git"],
+    &["julia"],
+    &["julia", "-e"],
+    &["ksh"],
+    &["ksh", "-c"],
+    &["lua"],
+    &["lua", "-e"],
+    &["node"],
+    &["node", "-e"],
+    &["nodejs"],
+    &["nodejs", "-e"],
+    &["npm", "run"],
+    &["osascript"],
+    &["perl"],
+    &["perl", "-e"],
+    &["php"],
+    &["php", "-r"],
+    &["pnpm", "run"],
     &["powershell"],
     &["powershell", "-Command"],
+    &["powershell", "-EncodedCommand"],
+    &["powershell", "-File"],
     &["powershell", "-c"],
     &["powershell.exe"],
     &["powershell.exe", "-Command"],
+    &["powershell.exe", "-EncodedCommand"],
+    &["powershell.exe", "-File"],
     &["powershell.exe", "-c"],
-    &["env"],
-    &["sudo"],
-    &["node"],
-    &["node", "-e"],
-    &["perl"],
-    &["perl", "-e"],
+    &["pwsh"],
+    &["pwsh", "-Command"],
+    &["pwsh", "-EncodedCommand"],
+    &["pwsh", "-File"],
+    &["pwsh", "-c"],
+    &["pwsh", "-e"],
+    &["pwsh", "-ec"],
+    &["pwsh", "-f"],
+    &["py"],
+    &["py", "-3"],
+    &["pypy"],
+    &["pypy3"],
+    &["python"],
+    &["python", "-"],
+    &["python", "-c"],
+    &["python3"],
+    &["python3", "-"],
+    &["python3", "-c"],
+    &["pythonw"],
+    &["pyw"],
+    &["rm"],
     &["ruby"],
     &["ruby", "-e"],
-    &["php"],
-    &["php", "-r"],
-    &["lua"],
-    &["lua", "-e"],
-    &["osascript"],
+    &["sh"],
+    &["sh", "-c"],
+    &["sh", "-lc"],
+    &["sudo"],
+    &["yarn", "run"],
+    &["zsh"],
+    &["zsh", "-c"],
+    &["zsh", "-lc"],
 ];
 
 /// Describes which unmatched-command heuristics should classify the command
@@ -139,11 +184,7 @@ pub(crate) fn child_uses_parent_exec_policy(parent_config: &Config, child_config
     fn exec_policy_config_folders(config: &Config) -> Vec<AbsolutePathBuf> {
         config
             .config_layer_stack
-            .get_layers(
-                ConfigLayerStackOrdering::LowestPrecedenceFirst,
-                /*include_disabled*/ false,
-            )
-            .into_iter()
+            .layers_low_to_high()
             .filter_map(codex_config::ConfigLayerEntry::config_folder)
             .collect()
     }
@@ -244,6 +285,7 @@ pub(crate) struct ExecApprovalRequest<'a> {
     pub(crate) windows_sandbox_level: WindowsSandboxLevel,
     pub(crate) sandbox_permissions: SandboxPermissions,
     pub(crate) prefix_rule: Option<Vec<String>>,
+    pub(crate) allow_prefix_rules: AllowPrefixRules,
 }
 
 impl ExecPolicyManager {
@@ -278,17 +320,19 @@ impl ExecPolicyManager {
             windows_sandbox_level,
             sandbox_permissions,
             prefix_rule,
+            allow_prefix_rules,
         } = req;
-        let exec_policy = self.current();
+        let exec_policy = self.current_for_prefix_rules(allow_prefix_rules);
         let ExecPolicyCommands {
             commands,
             used_complex_parsing,
             command_origin,
         } = commands_for_exec_policy(command);
-        // Keep heredoc prefix parsing for rule evaluation so existing
-        // allow/prompt/forbidden rules still apply, but avoid auto-derived
-        // amendments when only the heredoc fallback parser matched.
-        let auto_amendment_allowed = !used_complex_parsing;
+        // Keep heredoc prefix parsing for the rules that apply to this model,
+        // but avoid reusable approvals for cyber models or when only the
+        // heredoc fallback parser matched.
+        let auto_amendment_allowed =
+            !used_complex_parsing && allow_prefix_rules == AllowPrefixRules::Honor;
         let exec_policy_fallback = |cmd: &[String]| {
             render_decision_for_unmatched_command(
                 cmd,
@@ -597,10 +641,7 @@ pub async fn load_exec_policy(config_stack: &ConfigLayerStack) -> Result<Policy,
     // from each layer, so that higher-precedence layers can override
     // rules defined in lower-precedence ones.
     let mut policy_paths = Vec::new();
-    for layer in config_stack.get_layers(
-        ConfigLayerStackOrdering::LowestPrecedenceFirst,
-        /*include_disabled*/ false,
-    ) {
+    for layer in config_stack.layers_low_to_high() {
         if config_stack.ignore_user_and_project_exec_policy_rules()
             && matches!(
                 layer.name,
@@ -796,7 +837,7 @@ fn profile_has_managed_filesystem_restrictions(permission_profile: &PermissionPr
         && !file_system_sandbox_policy.has_full_disk_write_access()
 }
 
-fn default_policy_path(codex_home: &Path) -> PathBuf {
+pub(crate) fn default_policy_path(codex_home: &Path) -> PathBuf {
     codex_home.join(RULES_DIR_NAME).join(DEFAULT_POLICY_FILE)
 }
 

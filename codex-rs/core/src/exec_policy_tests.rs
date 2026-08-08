@@ -5,7 +5,6 @@ use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
-use codex_config::ConfigLayerStackOrdering;
 use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_config::LoaderOverrides;
@@ -130,11 +129,7 @@ async fn child_uses_parent_exec_policy_when_non_exec_policy_layers_differ() {
     let mut child_config = parent_config.clone();
     let mut layers: Vec<_> = child_config
         .config_layer_stack
-        .get_layers(
-            ConfigLayerStackOrdering::LowestPrecedenceFirst,
-            /*include_disabled*/ true,
-        )
-        .into_iter()
+        .all_layers_low_to_high()
         .cloned()
         .collect();
     layers.push(ConfigLayerEntry::new(
@@ -190,11 +185,7 @@ async fn child_does_not_use_parent_exec_policy_when_requirements_exec_policy_dif
     child_config.config_layer_stack = ConfigLayerStack::new(
         child_config
             .config_layer_stack
-            .get_layers(
-                ConfigLayerStackOrdering::LowestPrecedenceFirst,
-                /*include_disabled*/ true,
-            )
-            .into_iter()
+            .all_layers_low_to_high()
             .cloned()
             .collect(),
         requirements,
@@ -1182,12 +1173,14 @@ fn managed_cwd_write_profile_has_filesystem_restrictions() {
                 value: FileSystemSpecialPath::Root,
             },
             access: FileSystemAccessMode::Read,
+            missing_path_behavior: None,
         },
         FileSystemSandboxEntry {
             path: FileSystemPath::Special {
                 value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
             },
             access: FileSystemAccessMode::Write,
+            missing_path_behavior: None,
         },
     ]);
     let permission_profile = PermissionProfile::from_runtime_permissions(
@@ -1208,6 +1201,7 @@ fn managed_unresolvable_write_profile_has_filesystem_restrictions() {
                 value: FileSystemSpecialPath::Root,
             },
             access: FileSystemAccessMode::Read,
+            missing_path_behavior: None,
         },
         FileSystemSandboxEntry {
             path: FileSystemPath::Special {
@@ -1217,6 +1211,7 @@ fn managed_unresolvable_write_profile_has_filesystem_restrictions() {
                 ),
             },
             access: FileSystemAccessMode::Write,
+            missing_path_behavior: None,
         },
     ]);
     let permission_profile = PermissionProfile::from_runtime_permissions(
@@ -1237,6 +1232,7 @@ fn managed_full_disk_write_profile_has_no_filesystem_restrictions() {
                 value: FileSystemSpecialPath::Root,
             },
             access: FileSystemAccessMode::Write,
+            missing_path_behavior: None,
         }]);
     let permission_profile = PermissionProfile::from_runtime_permissions(
         &file_system_sandbox_policy,
@@ -1396,6 +1392,7 @@ async fn mixed_rule_and_sandbox_prompt_prioritizes_rule_for_rejection_decision()
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
             sandbox_permissions: SandboxPermissions::RequireEscalated,
             prefix_rule: None,
+            allow_prefix_rules: AllowPrefixRules::Honor,
         })
         .await;
 
@@ -1433,6 +1430,7 @@ async fn forced_rm_preserves_rule_rejection_when_granular_rules_are_disabled() {
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
             sandbox_permissions: SandboxPermissions::RequireEscalated,
             prefix_rule: None,
+            allow_prefix_rules: AllowPrefixRules::Honor,
         })
         .await;
 
@@ -1457,6 +1455,7 @@ async fn exec_approval_requirement_falls_back_to_heuristics() {
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
             sandbox_permissions: SandboxPermissions::UseDefault,
             prefix_rule: None,
+            allow_prefix_rules: AllowPrefixRules::Honor,
         })
         .await;
 
@@ -1482,6 +1481,7 @@ async fn empty_bash_lc_script_falls_back_to_original_command() {
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
             sandbox_permissions: SandboxPermissions::UseDefault,
             prefix_rule: None,
+            allow_prefix_rules: AllowPrefixRules::Honor,
         })
         .await;
 
@@ -1511,6 +1511,7 @@ async fn whitespace_bash_lc_script_falls_back_to_original_command() {
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
             sandbox_permissions: SandboxPermissions::UseDefault,
             prefix_rule: None,
+            allow_prefix_rules: AllowPrefixRules::Honor,
         })
         .await;
 
@@ -1540,6 +1541,7 @@ async fn request_rule_uses_prefix_rule() {
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
             sandbox_permissions: SandboxPermissions::RequireEscalated,
             prefix_rule: Some(vec!["cargo".to_string(), "install".to_string()]),
+            allow_prefix_rules: AllowPrefixRules::Honor,
         })
         .await;
 
@@ -1572,6 +1574,7 @@ async fn request_rule_falls_back_when_prefix_rule_does_not_approve_all_commands(
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
             sandbox_permissions: SandboxPermissions::RequireEscalated,
             prefix_rule: Some(vec!["cargo".to_string(), "install".to_string()]),
+            allow_prefix_rules: AllowPrefixRules::Honor,
         })
         .await;
 
@@ -1611,6 +1614,7 @@ async fn heuristics_apply_when_other_commands_match_policy() {
                 windows_sandbox_level: WindowsSandboxLevel::Disabled,
                 sandbox_permissions: SandboxPermissions::UseDefault,
                 prefix_rule: None,
+                allow_prefix_rules: AllowPrefixRules::Honor,
             })
             .await,
         ExecApprovalRequirement::NeedsApproval {
@@ -1946,6 +1950,7 @@ fn derive_requested_execpolicy_amendment_returns_none_for_shell_and_powershell_v
         vec!["pwsh".to_string()],
         vec!["pwsh".to_string(), "-Command".to_string()],
         vec!["pwsh".to_string(), "-c".to_string()],
+        vec!["pwsh".to_string(), "-ec".to_string()],
         vec!["powershell".to_string()],
         vec!["powershell".to_string(), "-Command".to_string()],
         vec!["powershell".to_string(), "-c".to_string()],
@@ -2088,6 +2093,7 @@ async fn forced_rm_requires_approval_or_specific_rejection_on_all_platforms() {
                 windows_sandbox_level: WindowsSandboxLevel::Disabled,
                 sandbox_permissions: permissions,
                 prefix_rule: None,
+                allow_prefix_rules: AllowPrefixRules::Honor,
             })
             .await,
         r#"On all platforms, a forbidden command should require approval
@@ -2109,6 +2115,7 @@ async fn forced_rm_requires_approval_or_specific_rejection_on_all_platforms() {
                 windows_sandbox_level: WindowsSandboxLevel::Disabled,
                 sandbox_permissions: permissions,
                 prefix_rule: None,
+                allow_prefix_rules: AllowPrefixRules::Honor,
             })
             .await,
         r#"On all platforms, a forbidden command should require approval
@@ -2167,6 +2174,7 @@ async fn verify_approval_requirement_for_unsafe_powershell_command() {
                 windows_sandbox_level: WindowsSandboxLevel::Disabled,
                 sandbox_permissions: permissions,
                 prefix_rule: None,
+                allow_prefix_rules: AllowPrefixRules::Honor,
             })
             .await,
         "{pwsh_approval_reason}"
@@ -2259,6 +2267,7 @@ async fn exec_approval_requirement_for_command(
             windows_sandbox_level: WindowsSandboxLevel::RestrictedToken,
             sandbox_permissions,
             prefix_rule,
+            allow_prefix_rules: AllowPrefixRules::Honor,
         })
         .await
 }

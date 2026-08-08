@@ -1,6 +1,7 @@
 use anyhow::Result;
 use codex_features::Feature;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::openai_models::ToolMode;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ThreadSettingsOverrides;
@@ -33,8 +34,12 @@ async fn websocket_model_switch_to_responses_lite_omits_top_level_tools() -> Res
     .await;
 
     let mut builder = test_codex()
+        .with_model_info_override("gpt-5.2", |model_info| {
+            model_info.tool_mode = Some(ToolMode::CodeMode);
+        })
         .with_model_info_override("gpt-5.4", |model_info| {
             model_info.use_responses_lite = true;
+            model_info.tool_mode = Some(ToolMode::CodeMode);
         })
         .with_model("gpt-5.2");
     let test = builder.build_with_websocket_server(&server).await?;
@@ -257,6 +262,7 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
 
     let call_id = "shell-command-call";
     let mut shell_command_call = ev_shell_command_call(call_id, "echo websocket");
+    shell_command_call["item"]["id"] = serde_json::json!("fc_shell_command_call");
     shell_command_call["item"]["internal_chat_message_metadata_passthrough"] =
         serde_json::json!({"turn_id": "turn-123"});
     let server = start_websocket_server(vec![vec![

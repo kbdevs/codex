@@ -10,8 +10,12 @@ use codex_protocol::models::ReasoningItemContent;
 use codex_protocol::models::ReasoningItemReasoningSummary;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::models::WebSearchAction;
+use codex_protocol::models::is_audio_close_tag_text;
+use codex_protocol::models::is_audio_open_tag_text;
 use codex_protocol::models::is_image_close_tag_text;
 use codex_protocol::models::is_image_open_tag_text;
+use codex_protocol::models::is_local_audio_close_tag_text;
+use codex_protocol::models::is_local_audio_open_tag_text;
 use codex_protocol::models::is_local_image_close_tag_text;
 use codex_protocol::models::is_local_image_open_tag_text;
 use codex_protocol::protocol::APPS_INSTRUCTIONS_OPEN_TAG;
@@ -23,24 +27,29 @@ use codex_protocol::protocol::MULTI_AGENT_MODE_OPEN_TAG;
 use codex_protocol::protocol::PLUGINS_INSTRUCTIONS_OPEN_TAG;
 use codex_protocol::protocol::REALTIME_CONVERSATION_OPEN_TAG;
 use codex_protocol::protocol::SKILLS_INSTRUCTIONS_OPEN_TAG;
+use codex_protocol::protocol::TOOLS_OPEN_TAG;
 use codex_protocol::user_input::UserInput;
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::context::APPROVED_COMMAND_PREFIX_SAVED_MESSAGE_PREFIX;
 use crate::context::is_contextual_user_fragment;
 use crate::context::parse_visible_hook_prompt_message;
 use crate::web_search::web_search_action_detail;
 
 const CONTEXTUAL_DEVELOPER_PREFIXES: &[&str] = &[
     "<permissions instructions>",
+    APPROVED_COMMAND_PREFIX_SAVED_MESSAGE_PREFIX,
     "<model_switch>",
     APPS_INSTRUCTIONS_OPEN_TAG,
     COLLABORATION_MODE_OPEN_TAG,
     MULTI_AGENT_MODE_OPEN_TAG,
     ENVIRONMENTS_INSTRUCTIONS_OPEN_TAG,
+    "<git_attribution>",
     PLUGINS_INSTRUCTIONS_OPEN_TAG,
     REALTIME_CONVERSATION_OPEN_TAG,
     SKILLS_INSTRUCTIONS_OPEN_TAG,
+    TOOLS_OPEN_TAG,
     "<personality_spec>",
     // Keep recognizing token-budget wrappers persisted by older versions.
     "<token_budget>",
@@ -93,12 +102,19 @@ fn parse_user_message(message: &[ContentItem]) -> Option<UserMessageItem> {
     for (idx, content_item) in message.iter().enumerate() {
         match content_item {
             ContentItem::InputText { text } => {
-                if (is_local_image_open_tag_text(text) || is_image_open_tag_text(text))
-                    && (matches!(message.get(idx + 1), Some(ContentItem::InputImage { .. })))
+                let is_image_label = ((is_local_image_open_tag_text(text)
+                    || is_image_open_tag_text(text))
+                    && matches!(message.get(idx + 1), Some(ContentItem::InputImage { .. })))
                     || (idx > 0
                         && (is_local_image_close_tag_text(text) || is_image_close_tag_text(text))
-                        && matches!(message.get(idx - 1), Some(ContentItem::InputImage { .. })))
-                {
+                        && matches!(message.get(idx - 1), Some(ContentItem::InputImage { .. })));
+                let is_audio_label = ((is_local_audio_open_tag_text(text)
+                    || is_audio_open_tag_text(text))
+                    && matches!(message.get(idx + 1), Some(ContentItem::InputAudio { .. })))
+                    || (idx > 0
+                        && (is_local_audio_close_tag_text(text) || is_audio_close_tag_text(text))
+                        && matches!(message.get(idx - 1), Some(ContentItem::InputAudio { .. })));
+                if is_image_label || is_audio_label {
                     continue;
                 }
                 content.push(UserInput::Text {
@@ -111,6 +127,11 @@ fn parse_user_message(message: &[ContentItem]) -> Option<UserMessageItem> {
                 content.push(UserInput::Image {
                     image_url: image_url.clone(),
                     detail: *detail,
+                });
+            }
+            ContentItem::InputAudio { audio_url } => {
+                content.push(UserInput::Audio {
+                    audio_url: audio_url.clone(),
                 });
             }
             ContentItem::OutputText { text } => {

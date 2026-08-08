@@ -1,6 +1,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 mod attribution;
+mod authorization_path;
 mod certs;
 mod config;
 mod connect_policy;
@@ -19,6 +20,10 @@ mod runtime;
 mod socks5;
 mod state;
 mod upstream;
+#[cfg(target_os = "windows")]
+mod windows_proxy_ingress;
+#[cfg(target_os = "windows")]
+mod windows_tcp_attribution;
 
 pub use attribution::PROXY_ATTRIBUTION_TOKEN_ENV_KEY;
 pub use attribution::write_attribution_frame;
@@ -32,6 +37,7 @@ pub use config::NetworkProxyConfig;
 pub use config::NetworkUnixSocketPermission;
 pub use config::NetworkUnixSocketPermissions;
 pub use config::host_and_port_from_network_addr;
+pub use config::managed_proxy_ports;
 pub use credential_broker::CREDENTIAL_BROKER_ACTIVE_ENV_KEY;
 pub use credential_broker::brokered_credential_dummy_env_keys;
 pub use credential_broker::brokered_credential_env_keys;
@@ -67,7 +73,9 @@ pub use proxy::PROXY_GIT_SSH_COMMAND_ENV_KEY;
 pub use proxy::PROXY_URL_ENV_KEYS;
 pub use proxy::PreparedManagedNetwork;
 pub use proxy::has_proxy_url_env_vars;
+pub use proxy::is_managed_proxy_env_var;
 pub use proxy::proxy_url_env_value;
+pub use proxy::strip_managed_proxy_env;
 pub use remote_config::RemoteNetworkProxyConfig;
 pub use remote_config::RemoteNetworkProxyLaunchConfig;
 pub use runtime::BlockedRequest;

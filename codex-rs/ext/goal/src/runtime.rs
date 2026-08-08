@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use codex_core::ThreadManager;
+use codex_core::TurnInput;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::ThreadGoal;
@@ -607,7 +608,10 @@ impl GoalRuntimeHandle {
         let item = continuation_steering_item(&protocol_goal_from_state(goal));
         drop(_goal_state_permit);
 
-        if let Err(err) = thread.try_start_turn_if_idle(vec![item]).await {
+        if let Err(err) = thread
+            .try_start_turn_if_idle(vec![TurnInput::ResponseItem(item)])
+            .await
+        {
             let _goal_state_permit = self.goal_state_permit().await?;
             retry_state.continuation_in_flight = false;
             retry_state.last_failed_turn_id = if rolled_back {

@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
 use crate::ExtensionData;
+use crate::ExtensionMetrics;
+use codex_mcp::McpResourceClient;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 
@@ -20,6 +24,10 @@ pub struct ThreadStartInput<'a, C> {
     pub persistent_thread_state_available: bool,
     /// Execution environments selected for this thread.
     pub environments: &'a [TurnEnvironmentSelection],
+    /// MCP resource access supplied by the host for this session.
+    pub mcp_resource_client: Option<Arc<McpResourceClient>>,
+    /// Session-attributed metrics supplied by the host.
+    pub extension_metrics: Option<Arc<dyn ExtensionMetrics>>,
     /// Store scoped to the host session runtime.
     pub session_store: &'a ExtensionData,
     /// Store scoped to this thread runtime.
@@ -34,8 +42,21 @@ pub struct ThreadResumeInput<'a> {
     pub thread_store: &'a ExtensionData,
 }
 
+/// Why a thread has no immediately pending work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ThreadIdleCause {
+    /// The previous turn completed and automatic follow-up work can run.
+    Completed,
+    /// The user interrupted the previous turn.
+    Interrupted,
+    /// The previous turn ended with a terminal error.
+    Failed,
+}
+
 /// Input supplied when the host has no immediately pending thread work.
 pub struct ThreadIdleInput<'a> {
+    /// Why the thread became idle.
+    pub cause: ThreadIdleCause,
     /// Store scoped to the host session runtime.
     pub session_store: &'a ExtensionData,
     /// Store scoped to this thread runtime.

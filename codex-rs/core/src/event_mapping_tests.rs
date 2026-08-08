@@ -49,7 +49,7 @@ fn recognizes_context_window_as_contextual_developer_content() {
     let content = vec![ContentItem::InputText {
         text: format!(
             r#"{CONTEXT_WINDOW_OPEN_TAG}
-Thread id: 00000000-0000-0000-0000-000000000000
+Agent name: /root
 {CONTEXT_WINDOW_CLOSE_TAG}"#
         ),
     }];
@@ -160,6 +160,50 @@ fn skips_local_image_label_text() {
                 },
             ];
             assert_eq!(user.content, expected_content);
+        }
+        other => panic!("expected TurnItem::UserMessage, got {other:?}"),
+    }
+}
+
+#[test]
+fn skips_local_audio_label_text() {
+    let audio_url = "data:audio/wav;base64,abc".to_string();
+    let label = r#"<audio name=[Audio #1] path="/tmp/local.wav">"#.to_string();
+    let user_text = "Please transcribe this audio.".to_string();
+
+    let item = ResponseItem::Message {
+        id: None,
+        role: "user".to_string(),
+        content: vec![
+            ContentItem::InputText { text: label },
+            ContentItem::InputAudio {
+                audio_url: audio_url.clone(),
+            },
+            ContentItem::InputText {
+                text: "</audio>".to_string(),
+            },
+            ContentItem::InputText {
+                text: user_text.clone(),
+            },
+        ],
+        phase: None,
+        internal_chat_message_metadata_passthrough: None,
+    };
+
+    let turn_item = parse_turn_item(&item).expect("expected user message turn item");
+
+    match turn_item {
+        TurnItem::UserMessage(user) => {
+            assert_eq!(
+                user.content,
+                vec![
+                    UserInput::Audio { audio_url },
+                    UserInput::Text {
+                        text: user_text,
+                        text_elements: Vec::new(),
+                    },
+                ]
+            );
         }
         other => panic!("expected TurnItem::UserMessage, got {other:?}"),
     }

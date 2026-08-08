@@ -13,6 +13,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::config_types::AutoCompactTokenLimitScope;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::models::BaseInstructionsProvenance;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelMessages;
@@ -43,14 +44,16 @@ use crate::config::NetworkProxySpec;
 use crate::config::Permissions;
 use crate::context::ContextualUserFragment;
 use crate::context::GuardianFollowupReviewReminder;
+use crate::session::GitEnrichmentPolicy;
 use crate::session::SessionIo;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use codex_config::types::McpServerConfig;
 use codex_features::Feature;
 use codex_model_provider_info::ModelProviderInfo;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_path_uri::PathUri;
 
+use super::ApprovalRequestReasons;
 use super::GUARDIAN_REVIEWER_NAME;
 use super::GuardianApprovalRequest;
 use super::prompt::BUNDLED_GUARDIAN_POLICY;
@@ -79,7 +82,7 @@ pub(crate) struct GuardianReviewSessionParams {
     pub(crate) parent_turn: Arc<TurnContext>,
     pub(crate) spawn_config: Config,
     pub(crate) request: GuardianApprovalRequest,
-    pub(crate) retry_reason: Option<String>,
+    pub(crate) reasons: ApprovalRequestReasons,
     pub(crate) schema: Value,
     pub(crate) model: String,
     pub(crate) reasoning_effort: Option<ReasoningEffortConfig>,
@@ -134,6 +137,7 @@ fn token_usage_delta(start: &TokenUsage, end: &TokenUsage) -> TokenUsage {
         reasoning_output_tokens: (end.reasoning_output_tokens - start.reasoning_output_tokens)
             .max(0),
         total_tokens: (end.total_tokens - start.total_tokens).max(0),
+        codex_rollout_budget_units: None,
     }
 }
 
@@ -151,9 +155,9 @@ struct GuardianReviewForkSnapshot {
 
 #[derive(Debug, Clone, PartialEq)]
 struct GuardianReviewSessionReuseKey {
-    // Only include settings that affect spawned-session behavior so reuse
-    // invalidation remains explicit and does not depend on unrelated config
-    // bookkeeping.
+    // Only include settings that affect spawned-session behavior and parent
+    // history rewrites that invalidate existing reviewer context.
+    parent_history_version: u64,
     model: Option<String>,
     model_provider_id: String,
     model_provider: ModelProviderInfo,
@@ -167,7 +171,7 @@ struct GuardianReviewSessionReuseKey {
     base_instructions: Option<String>,
     user_instructions: Option<UserInstructions>,
     compact_prompt: Option<String>,
-    cwd: AbsolutePathBuf,
+    cwd: PathUri,
     mcp_servers: Constrained<HashMap<String, McpServerConfig>>,
     codex_linux_sandbox_exe: Option<PathBuf>,
     main_execve_wrapper_exe: Option<PathBuf>,
@@ -180,8 +184,17 @@ impl GuardianReviewSessionReuseKey {
     fn from_spawn_config(
         spawn_config: &Config,
         user_instructions: Option<UserInstructions>,
+        parent_history_version: u64,
     ) -> Self {
         Self {
+            parent_history_version: if spawn_config
+                .features
+                .enabled(Feature::GuardianReuseParentCompaction)
+            {
+                parent_history_version
+            } else {
+                0
+            },
             model: spawn_config.model.clone(),
             model_provider_id: spawn_config.model_provider_id.clone(),
             model_provider: spawn_config.model_provider.clone(),
@@ -195,7 +208,7 @@ impl GuardianReviewSessionReuseKey {
             base_instructions: spawn_config.base_instructions.clone(),
             user_instructions,
             compact_prompt: spawn_config.compact_prompt.clone(),
-            cwd: spawn_config.cwd.clone(),
+            cwd: PathUri::from_abs_path(&spawn_config.cwd),
             mcp_servers: spawn_config.mcp_servers.clone(),
             codex_linux_sandbox_exe: spawn_config.codex_linux_sandbox_exe.clone(),
             main_execve_wrapper_exe: spawn_config.main_execve_wrapper_exe.clone(),
@@ -203,6 +216,29 @@ impl GuardianReviewSessionReuseKey {
             features: spawn_config.features.clone(),
             use_experimental_unified_exec_tool: spawn_config.use_experimental_unified_exec_tool,
         }
+    }
+}
+
+fn encrypted_parent_compaction(items: &[ResponseItem]) -> Option<ResponseItem> {
+    let item = items.iter().rev().find(|item| {
+        matches!(
+            item,
+            ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
+        )
+    })?;
+
+    match item {
+        ResponseItem::Compaction {
+            id: Some(_),
+            encrypted_content,
+            ..
+        } if !encrypted_content.is_empty() => Some(item.clone()),
+        ResponseItem::ContextCompaction {
+            id: Some(_),
+            encrypted_content: Some(encrypted_content),
+            ..
+        } if !encrypted_content.is_empty() => Some(item.clone()),
+        _ => None,
     }
 }
 
@@ -307,9 +343,16 @@ impl GuardianReviewSessionManager {
             let spawn_config = guardian_review_session_config(&parent_session, &parent_turn)
                 .await?
                 .spawn_config;
+            let parent_history = parent_session.clone_history().await;
+            let parent_compaction = spawn_config
+                .features
+                .enabled(Feature::GuardianReuseParentCompaction)
+                .then(|| encrypted_parent_compaction(parent_history.raw_items()))
+                .flatten();
             let reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
                 &spawn_config,
                 parent_session.user_instructions().await,
+                parent_history.history_version(),
             );
             let spawn_cancel_token = self.cancellation_token.child_token();
             let spawn_cancel_guard = spawn_cancel_token.clone().drop_guard();
@@ -319,6 +362,7 @@ impl GuardianReviewSessionManager {
                 spawn_config,
                 reuse_key,
                 spawn_cancel_token.clone(),
+                parent_compaction,
                 /*fork_snapshot*/ None,
             )
             .await?;
@@ -371,9 +415,17 @@ impl GuardianReviewSessionManager {
         params: GuardianReviewSessionParams,
     ) -> (GuardianReviewSessionOutcome, GuardianReviewAnalyticsResult) {
         let deadline = params.deadline;
-        let next_reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
+        let parent_history = params.parent_session.clone_history().await;
+        let parent_compaction = params
+            .spawn_config
+            .features
+            .enabled(Feature::GuardianReuseParentCompaction)
+            .then(|| encrypted_parent_compaction(parent_history.raw_items()))
+            .flatten();
+        let mut next_reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
             &params.spawn_config,
             params.parent_session.user_instructions().await,
+            parent_history.history_version(),
         );
         let mut stale_trunk_to_shutdown = None;
         let mut spawned_trunk = false;
@@ -385,6 +437,13 @@ impl GuardianReviewSessionManager {
         .await
         {
             Ok(mut state) => {
+                if parent_compaction.is_none()
+                    && let Some(trunk) = state.trunk.as_ref()
+                {
+                    // Without a decryptable summary, the existing reviewer may
+                    // hold the only remaining authorization or restriction.
+                    next_reuse_key.parent_history_version = trunk.reuse_key.parent_history_version;
+                }
                 if let Some(trunk) = state.trunk.as_ref()
                     && trunk.reuse_key != next_reuse_key
                     && trunk.review_lock.try_acquire().is_ok()
@@ -404,6 +463,7 @@ impl GuardianReviewSessionManager {
                             params.spawn_config.clone(),
                             next_reuse_key.clone(),
                             spawn_cancel_token.clone(),
+                            parent_compaction.clone(),
                             /*fork_snapshot*/ None,
                         )),
                     )
@@ -449,6 +509,7 @@ impl GuardianReviewSessionManager {
                 params,
                 next_reuse_key,
                 deadline,
+                parent_compaction,
                 /*fork_snapshot*/ None,
             ))
             .await;
@@ -461,6 +522,7 @@ impl GuardianReviewSessionManager {
                     params,
                     next_reuse_key,
                     deadline,
+                    parent_compaction,
                     trunk.fork_snapshot().await,
                 ))
                 .await;
@@ -499,6 +561,7 @@ impl GuardianReviewSessionManager {
         let reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
             session.get_config().await.as_ref(),
             session.user_instructions().await,
+            session.clone_history().await.history_version(),
         );
         self.state.lock().await.trunk = Some(Arc::new(GuardianReviewSession {
             reuse_key,
@@ -519,6 +582,7 @@ impl GuardianReviewSessionManager {
         let reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
             session.get_config().await.as_ref(),
             session.user_instructions().await,
+            session.clone_history().await.history_version(),
         );
         self.state
             .lock()
@@ -602,6 +666,7 @@ impl GuardianReviewSessionManager {
         params: GuardianReviewSessionParams,
         reuse_key: GuardianReviewSessionReuseKey,
         deadline: tokio::time::Instant,
+        parent_compaction: Option<ResponseItem>,
         fork_snapshot: Option<GuardianReviewForkSnapshot>,
     ) -> (GuardianReviewSessionOutcome, GuardianReviewAnalyticsResult) {
         let spawn_cancel_token = self.cancellation_token.child_token();
@@ -617,6 +682,7 @@ impl GuardianReviewSessionManager {
                 fork_config,
                 reuse_key,
                 spawn_cancel_token.clone(),
+                parent_compaction,
                 fork_snapshot,
             )),
         )
@@ -659,6 +725,7 @@ async fn spawn_guardian_review_session(
     spawn_config: Config,
     reuse_key: GuardianReviewSessionReuseKey,
     cancel_token: CancellationToken,
+    parent_compaction: Option<ResponseItem>,
     fork_snapshot: Option<GuardianReviewForkSnapshot>,
 ) -> anyhow::Result<GuardianReviewSession> {
     let (initial_history, prior_review_count, initial_transcript_cursor) = match fork_snapshot {
@@ -667,7 +734,12 @@ async fn spawn_guardian_review_session(
             fork_snapshot.prior_review_count,
             fork_snapshot.last_reviewed_transcript_cursor,
         ),
-        None => (None, 0, None),
+        None => (
+            parent_compaction
+                .map(|item| InitialHistory::Forked(vec![RolloutItem::ResponseItem(item)])),
+            0,
+            None,
+        ),
     };
     let (session, io) = Box::pin(run_codex_thread_interactive(
         spawn_config,
@@ -678,6 +750,8 @@ async fn spawn_guardian_review_session(
         cancel_token.clone(),
         SubAgentSource::Other(GUARDIAN_REVIEWER_NAME.to_string()),
         initial_history,
+        GitEnrichmentPolicy::Skip,
+        codex_sandboxing::WindowsSandboxProxySettingsMode::Preserve,
     ))
     .await?;
 
@@ -763,7 +837,7 @@ async fn run_review_on_session(
             build_guardian_prompt_items_with_parent_turn(
                 params.parent_session.as_ref(),
                 Some(params.parent_turn.as_ref()),
-                params.retry_reason.clone(),
+                params.reasons.clone(),
                 params.request.clone(),
                 prompt_mode,
             )
@@ -803,10 +877,8 @@ async fn run_review_on_session(
         .and_then(|environment| environment.cwd().to_abs_path().ok())
         .unwrap_or_else(|| params.parent_turn.config.cwd.clone());
 
-    let submit_result = run_before_review_deadline(
-        deadline,
-        params.external_cancel.as_ref(),
-        Box::pin(review_session.io.submit(Op::UserInput {
+    let submission = review_session.io.submit_with_trace(
+        Op::UserInput {
             items: prompt_items.items,
             final_output_json_schema: Some(params.schema.clone()),
             responsesapi_client_metadata: None,
@@ -831,7 +903,14 @@ async fn run_review_on_session(
                 }),
                 ..Default::default()
             },
-        })),
+        },
+        /*trace*/ None,
+        Some(params.parent_turn.sub_id.clone()),
+    );
+    let submit_result = run_before_review_deadline(
+        deadline,
+        params.external_cancel.as_ref(),
+        Box::pin(submission),
     )
     .await;
     let child_turn_id = match submit_result {
@@ -1018,6 +1097,7 @@ pub(crate) fn build_guardian_review_session_config(
         tenant_policy_config,
         policy_template,
     ));
+    guardian_config.base_instructions_provenance = Some(BaseInstructionsProvenance::Custom);
     guardian_config.notify = None;
     guardian_config.developer_instructions = None;
     guardian_config.permissions.approval_policy = Constrained::allow_only(AskForApproval::Never);
@@ -1050,7 +1130,6 @@ pub(crate) fn build_guardian_review_session_config(
         )?);
     }
     for feature in [
-        Feature::SpawnCsv,
         Feature::Collab,
         Feature::MultiAgentV2,
         Feature::CodexHooks,
@@ -1152,6 +1231,7 @@ mod tests {
         let reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
             session.get_config().await.as_ref(),
             session.user_instructions().await,
+            session.clone_history().await.history_version(),
         );
 
         (
@@ -1238,7 +1318,7 @@ mod tests {
                 additional_permissions: None,
                 justification: Some("Inspect repo state.".to_string()),
             },
-            retry_reason: None,
+            reasons: ApprovalRequestReasons::default(),
             schema: super::super::prompt::guardian_output_schema(),
             model,
             reasoning_effort,
@@ -1251,6 +1331,31 @@ mod tests {
             external_cancel: None,
             deadline: tokio::time::Instant::now() + Duration::from_secs(30),
         }
+    }
+
+    #[tokio::test]
+    async fn spawned_guardian_session_preserves_windows_sandbox_proxy_settings() {
+        let params = test_review_params().await;
+        let manager = GuardianReviewSessionManager::default();
+        manager
+            .initialize(params.parent_session, params.parent_turn)
+            .await
+            .expect("initialize Guardian session");
+        let mode = manager
+            .state
+            .lock()
+            .await
+            .trunk
+            .as_ref()
+            .expect("Guardian session")
+            .session
+            .windows_sandbox_proxy_settings_mode;
+
+        assert_eq!(
+            mode,
+            codex_sandboxing::WindowsSandboxProxySettingsMode::Preserve
+        );
+        manager.shutdown().await;
     }
 
     #[tokio::test]
@@ -1267,6 +1372,7 @@ mod tests {
         let cached_reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
             &cached_spawn_config,
             /*user_instructions*/ None,
+            /*parent_history_version*/ 0,
         );
 
         let mut changed_parent_config = parent_config;
@@ -1283,15 +1389,72 @@ mod tests {
         let next_reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
             &next_spawn_config,
             /*user_instructions*/ None,
+            /*parent_history_version*/ 0,
         );
 
+        assert_eq!(
+            cached_reuse_key.cwd,
+            PathUri::from_abs_path(&cached_spawn_config.cwd)
+        );
         assert_ne!(cached_reuse_key, next_reuse_key);
         assert_eq!(
             cached_reuse_key,
             GuardianReviewSessionReuseKey::from_spawn_config(
                 &cached_spawn_config,
                 /*user_instructions*/ None,
+                /*parent_history_version*/ 0,
             )
+        );
+
+        assert_eq!(
+            cached_reuse_key,
+            GuardianReviewSessionReuseKey::from_spawn_config(
+                &cached_spawn_config,
+                /*user_instructions*/ None,
+                /*parent_history_version*/ 1,
+            )
+        );
+
+        let mut compaction_enabled_config = cached_spawn_config;
+        compaction_enabled_config
+            .features
+            .enable(Feature::GuardianReuseParentCompaction)
+            .expect("Guardian parent-compaction reuse should be configurable");
+        assert_ne!(
+            GuardianReviewSessionReuseKey::from_spawn_config(
+                &compaction_enabled_config,
+                /*user_instructions*/ None,
+                /*parent_history_version*/ 0,
+            ),
+            GuardianReviewSessionReuseKey::from_spawn_config(
+                &compaction_enabled_config,
+                /*user_instructions*/ None,
+                /*parent_history_version*/ 1,
+            )
+        );
+    }
+
+    #[test]
+    fn encrypted_parent_compaction_requires_original_item_id() {
+        let item = ResponseItem::Compaction {
+            id: Some(codex_protocol::ResponseItemId::from_server(
+                "cmp_guardian_parent_summary".to_string(),
+            )),
+            encrypted_content: "encrypted guardian parent summary".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        };
+
+        assert_eq!(
+            encrypted_parent_compaction(std::slice::from_ref(&item)),
+            Some(item)
+        );
+        assert_eq!(
+            encrypted_parent_compaction(&[ResponseItem::Compaction {
+                id: None,
+                encrypted_content: "encrypted guardian parent summary".to_string(),
+                internal_chat_message_metadata_passthrough: None,
+            }]),
+            None
         );
     }
 
@@ -1349,6 +1512,7 @@ mod tests {
         let cached_reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
             &cached_spawn_config,
             /*user_instructions*/ None,
+            /*parent_history_version*/ 0,
         );
 
         let mut changed_parent_config = parent_config;
@@ -1365,6 +1529,7 @@ mod tests {
         let next_reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
             &next_spawn_config,
             /*user_instructions*/ None,
+            /*parent_history_version*/ 0,
         );
 
         assert_ne!(cached_reuse_key, next_reuse_key);
@@ -1417,11 +1582,13 @@ mod tests {
             instructions_template: None,
             instructions_variables: None,
             approvals: None,
+            collaboration_modes: None,
             auto_review: Some(AutoReviewMessages {
                 policy: Some("Use the catalog Guardian policy.".to_string()),
                 policy_template: Some(catalog_template.to_string()),
             }),
             permissions: None,
+            token_budget: None,
         };
 
         let guardian_config = build_guardian_review_session_config(
@@ -1449,11 +1616,13 @@ mod tests {
             instructions_template: None,
             instructions_variables: None,
             approvals: None,
+            collaboration_modes: None,
             auto_review: Some(AutoReviewMessages {
                 policy: Some(String::new()),
                 policy_template: None,
             }),
             permissions: None,
+            token_budget: None,
         };
 
         let guardian_config = build_guardian_review_session_config(
@@ -1489,11 +1658,13 @@ mod tests {
             instructions_template: None,
             instructions_variables: None,
             approvals: None,
+            collaboration_modes: None,
             auto_review: Some(AutoReviewMessages {
                 policy: Some(catalog_policy.to_string()),
                 policy_template: Some(String::new()),
             }),
             permissions: None,
+            token_budget: None,
         };
 
         let guardian_config = build_guardian_review_session_config(
@@ -1642,6 +1813,7 @@ mod tests {
             output_tokens: 6,
             reasoning_output_tokens: 4,
             total_tokens: 28,
+            codex_rollout_budget_units: None,
         };
         let end = TokenUsage {
             input_tokens: 15,
@@ -1650,6 +1822,7 @@ mod tests {
             output_tokens: 10,
             reasoning_output_tokens: 2,
             total_tokens: 34,
+            codex_rollout_budget_units: None,
         };
 
         assert_eq!(
@@ -1661,6 +1834,7 @@ mod tests {
                 output_tokens: 4,
                 reasoning_output_tokens: 0,
                 total_tokens: 6,
+                codex_rollout_budget_units: None,
             }
         );
     }
@@ -1718,6 +1892,11 @@ mod tests {
         review_session.reuse_key = GuardianReviewSessionReuseKey::from_spawn_config(
             &params.spawn_config,
             params.parent_session.user_instructions().await,
+            params
+                .parent_session
+                .clone_history()
+                .await
+                .history_version(),
         );
         let manager = GuardianReviewSessionManager {
             state: Arc::new(Mutex::new(GuardianReviewSessionState {

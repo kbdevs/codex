@@ -56,12 +56,6 @@
           "description": "Whether to record a model-visible message when an agent turn is interrupted. Defaults to true.",
           "type": "boolean"
         },
-        "job_max_runtime_seconds": {
-          "description": "Default maximum runtime in seconds for agent job workers.",
-          "format": "uint64",
-          "minimum": 1.0,
-          "type": "integer"
-        },
         "max_concurrent_threads_per_session": {
           "description": "Maximum number of spawned agent threads that can be open concurrently per session. When unset, the selected multi-agent backend uses its default.",
           "format": "uint",
@@ -371,6 +365,12 @@
     "CodeModeConfigToml": {
       "additionalProperties": false,
       "properties": {
+        "default_exec_yield_time_ms": {
+          "description": "Default yield timeout for code-mode exec calls, in milliseconds.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
         "direct_only_tool_namespaces": {
           "description": "Exact tool namespaces to expose only as direct model tools. These tools bypass deferral, remain top-level in code-mode-only sessions, and are omitted from the nested code-mode tool surface.",
           "items": {
@@ -387,6 +387,19 @@
             "type": "string"
           },
           "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CodeModeHostConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "disable_in_process_fallback": {
+          "description": "Keep code mode fail-closed when the standalone host is unavailable.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -449,6 +462,9 @@
             "auth_elicitation": {
               "type": "boolean"
             },
+            "background_paginated_rollout_migration": {
+              "type": "boolean"
+            },
             "browser_use": {
               "type": "boolean"
             },
@@ -464,7 +480,13 @@
             "code_mode": {
               "$ref": "#/definitions/FeatureToml_for_CodeModeConfigToml"
             },
+            "code_mode_buffered_exec": {
+              "type": "boolean"
+            },
             "code_mode_host": {
+              "$ref": "#/definitions/FeatureToml_for_CodeModeHostConfigToml"
+            },
+            "code_mode_interrupt": {
               "type": "boolean"
             },
             "code_mode_only": {
@@ -500,6 +522,9 @@
             "deferred_executor": {
               "type": "boolean"
             },
+            "deferred_tool_world_state": {
+              "type": "boolean"
+            },
             "elevated_windows_sandbox": {
               "type": "boolean"
             },
@@ -516,6 +541,9 @@
               "type": "boolean"
             },
             "exec_permission_approvals": {
+              "type": "boolean"
+            },
+            "executed_tool_call_metadata": {
               "type": "boolean"
             },
             "executor_capability_discovery": {
@@ -542,6 +570,12 @@
             "guardian_approval": {
               "type": "boolean"
             },
+            "guardian_reuse_parent_compaction": {
+              "type": "boolean"
+            },
+            "guardianv2": {
+              "type": "boolean"
+            },
             "hooks": {
               "type": "boolean"
             },
@@ -551,10 +585,16 @@
             "image_generation": {
               "type": "boolean"
             },
+            "image_resize_notice": {
+              "type": "boolean"
+            },
             "imagegenext": {
               "type": "boolean"
             },
             "in_app_browser": {
+              "type": "boolean"
+            },
+            "in_app_updates": {
               "type": "boolean"
             },
             "item_ids": {
@@ -567,6 +607,9 @@
               "type": "boolean"
             },
             "local_thread_store_compression": {
+              "type": "boolean"
+            },
+            "mcp_2026_07_28": {
               "type": "boolean"
             },
             "memories": {
@@ -591,7 +634,7 @@
               "$ref": "#/definitions/FeatureToml_for_NetworkProxyConfigToml"
             },
             "non_prefixed_mcp_tool_names": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToml_for_NonPrefixedMcpToolNamesConfigToml"
             },
             "personality": {
               "type": "boolean"
@@ -609,6 +652,9 @@
               "type": "boolean"
             },
             "realtime_conversation": {
+              "type": "boolean"
+            },
+            "recommended_plugins": {
               "type": "boolean"
             },
             "remote_compaction_v2": {
@@ -698,6 +744,9 @@
             "tool_call_mcp_elicitation": {
               "type": "boolean"
             },
+            "tool_registry": {
+              "$ref": "#/definitions/ToolRegistryConfigToml"
+            },
             "tool_search": {
               "type": "boolean"
             },
@@ -722,6 +771,9 @@
             "unified_exec_zsh_fork": {
               "type": "boolean"
             },
+            "unified_image_budget": {
+              "type": "boolean"
+            },
             "use_agent_identity": {
               "type": "boolean"
             },
@@ -729,6 +781,9 @@
               "type": "boolean"
             },
             "use_linux_sandbox_bwrap": {
+              "type": "boolean"
+            },
+            "view_image": {
               "type": "boolean"
             },
             "web_search": {
@@ -977,6 +1032,16 @@
         }
       ]
     },
+    "FeatureToml_for_CodeModeHostConfigToml": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/definitions/CodeModeHostConfigToml"
+        }
+      ]
+    },
     "FeatureToml_for_CurrentTimeReminderConfigToml": {
       "anyOf": [
         {
@@ -1004,6 +1069,16 @@
         },
         {
           "$ref": "#/definitions/NetworkProxyConfigToml"
+        }
+      ]
+    },
+    "FeatureToml_for_NonPrefixedMcpToolNamesConfigToml": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/definitions/NonPrefixedMcpToolNamesConfigToml"
         }
       ]
     },
@@ -1198,6 +1273,12 @@
       "oneOf": [
         {
           "properties": {
+            "additionalContextLimit": {
+              "description": "Approximate token threshold for spilling this hook's `additionalContext` to disk. Unset uses 2,500 tokens; `0` disables spilling for this hook. The threshold is evaluated against the original context; a spilled preview also includes recovery metadata.",
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
             "async": {
               "default": false,
               "type": "boolean"
@@ -1228,6 +1309,43 @@
           },
           "required": [
             "command",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "input": {
+              "additionalProperties": true,
+              "default": {},
+              "type": "object"
+            },
+            "server": {
+              "type": "string"
+            },
+            "statusMessage": {
+              "default": null,
+              "type": "string"
+            },
+            "timeout": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "mcp_tool"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "server",
+            "tool",
             "type"
           ],
           "type": "object"
@@ -1373,7 +1491,7 @@
           "type": "array"
         }
       ],
-      "description": "One action binding value in config.\n\nThis accepts either:\n\n1. A single key spec string (`\"ctrl-a\"`). 2. A list of key spec strings (`[\"ctrl-a\", \"alt-a\"]`).\n\nAn empty list explicitly unbinds the action in that scope. Because an explicit empty list is still a configured value, runtime resolution must not fall through to global or built-in defaults for that action."
+      "description": "One action binding value in config.\n\nThis accepts either:\n\n1. A single key or chord string (`\"ctrl-a\"` or `\"ctrl-x ctrl-s\"`). 2. A list of alternative bindings (`[\"ctrl-a\", \"ctrl-x ctrl-s\"]`).\n\nAn empty list explicitly unbinds the action in that scope. Because an explicit empty list is still a configured value, runtime resolution must not fall through to global or built-in defaults for that action."
     },
     "LegacyAppPathString": {
       "type": "string"
@@ -1730,6 +1848,11 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "supports_standalone_web_search": {
+          "default": false,
+          "description": "Whether this provider supports the standalone web-search endpoint.",
+          "type": "boolean"
+        },
         "supports_websockets": {
           "default": false,
           "description": "Whether this provider supports the Responses API WebSocket transport.",
@@ -1798,6 +1921,10 @@
         "root_agent_usage_hint_text": {
           "type": "string"
         },
+        "subagent_developer_instructions": {
+          "description": "Overrides inherited developer instructions for subagents without role-specific instructions.",
+          "type": "string"
+        },
         "subagent_usage_hint_text": {
           "type": "string"
         },
@@ -1813,6 +1940,10 @@
         },
         "usage_hint_text": {
           "type": "string"
+        },
+        "wait_agent_enabled": {
+          "description": "Expose the multi-agent v2 `wait_agent` tool.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -2068,6 +2199,22 @@
       "type": "string"
     },
     "NetworkUnixSocketPermissionsToml": {
+      "type": "object"
+    },
+    "NonPrefixedMcpToolNamesConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "server_names": {
+          "description": "MCP servers whose tools should omit the legacy `mcp__` namespace prefix.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
       "type": "object"
     },
     "Notice": {
@@ -2609,6 +2756,13 @@
           "default": null,
           "type": "string"
         },
+        "omit_tools_from": {
+          "default": null,
+          "items": {
+            "$ref": "#/definitions/ToolExposureSurface"
+          },
+          "type": "array"
+        },
         "required": {
           "default": null,
           "type": "boolean"
@@ -2754,6 +2908,25 @@
         }
       ]
     },
+    "ResumeCwdMode": {
+      "description": "Working directory to use when resuming or forking a session.",
+      "oneOf": [
+        {
+          "description": "Use the directory where Codex was launched.",
+          "enum": [
+            "current"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Use the latest working directory recorded in the selected session.",
+          "enum": [
+            "session"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "RolloutBudgetConfigToml": {
       "additionalProperties": false,
       "properties": {
@@ -2827,6 +3000,14 @@
       ],
       "type": "string"
     },
+    "ShellEnvironmentPolicyFilter": {
+      "description": "Assigns a shell environment variable pattern to the include-only or exclude set. Includes do not re-add variables removed by another exclude pattern.",
+      "enum": [
+        "include",
+        "exclude"
+      ],
+      "type": "string"
+    },
     "ShellEnvironmentPolicyInherit": {
       "oneOf": [
         {
@@ -2854,10 +3035,28 @@
     },
     "ShellEnvironmentPolicyToml": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "exclude",
+              "filters"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "filters",
+              "include_only"
+            ]
+          }
+        }
+      ],
       "description": "Policy for building the `env` when spawning a process via shell-like tools.",
       "properties": {
         "exclude": {
-          "description": "List of regular expressions.",
+          "description": "Legacy list of regular expressions to exclude.",
           "items": {
             "type": "string"
           },
@@ -2866,11 +3065,18 @@
         "experimental_use_profile": {
           "type": "boolean"
         },
+        "filters": {
+          "additionalProperties": {
+            "$ref": "#/definitions/ShellEnvironmentPolicyFilter"
+          },
+          "description": "Pattern actions used by the canonical table representation.\n\nOrdinary config keeps accepting the legacy arrays above during the migration. Requirements will accept only this keyed form, keeping array compatibility isolated so the legacy fields can be deprecated later. Pattern keys merge case-insensitively across config layers, matching how the resulting patterns match environment variable names.",
+          "type": "object"
+        },
         "ignore_default_excludes": {
           "type": "boolean"
         },
         "include_only": {
-          "description": "List of regular expressions.",
+          "description": "Legacy list of regular expressions to include.",
           "items": {
             "type": "string"
           },
@@ -2986,6 +3192,46 @@
       },
       "type": "object"
     },
+    "ToolExposureSurface": {
+      "description": "A model-facing surface on which a tool can be exposed.",
+      "oneOf": [
+        {
+          "description": "Nested tools available to Code Mode scripts.",
+          "enum": [
+            "code_mode"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Tools discovered later through tool search.",
+          "enum": [
+            "deferred"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Tools present in the model's initial tool list.",
+          "enum": [
+            "direct"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ToolRegistryConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "error_on_tool_collisions": {
+          "description": "Fail the turn when multiple tools share the same effective name.",
+          "type": "boolean"
+        },
+        "turn_metadata_includes_tool_info": {
+          "description": "Include authoritative tool information in per-turn request metadata.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "ToolSuggestConfig": {
       "additionalProperties": false,
       "properties": {
@@ -3050,6 +3296,9 @@
       "properties": {
         "experimental_request_user_input": {
           "$ref": "#/definitions/ExperimentalRequestUserInput"
+        },
+        "update_plan": {
+          "$ref": "#/definitions/UpdatePlanToolConfig"
         },
         "web_search": {
           "allOf": [
@@ -3147,6 +3396,7 @@
               "toggle_fast_mode": null,
               "toggle_raw_output": null,
               "toggle_shortcuts": null,
+              "toggle_side_conversation": null,
               "toggle_vim_mode": null
             },
             "list": {
@@ -3284,6 +3534,15 @@
           "default": false,
           "description": "Start the TUI in raw scrollback mode for copy-friendly transcript output. Defaults to `false`.",
           "type": "boolean"
+        },
+        "resume_cwd": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ResumeCwdMode"
+            }
+          ],
+          "default": null,
+          "description": "Working directory to use when resuming or forking a session. When unset, prompt if the current and session directories differ."
         },
         "session_picker_view": {
           "allOf": [
@@ -3716,6 +3975,14 @@
           ],
           "description": "Toggle the composer shortcut overlay."
         },
+        "toggle_side_conversation": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Switch between a side conversation and its parent without closing either."
+        },
         "toggle_vim_mode": {
           "allOf": [
             {
@@ -3817,6 +4084,7 @@
             "toggle_fast_mode": null,
             "toggle_raw_output": null,
             "toggle_shortcuts": null,
+            "toggle_side_conversation": null,
             "toggle_vim_mode": null
           }
         },
@@ -4533,6 +4801,16 @@
       },
       "type": "object"
     },
+    "UpdatePlanToolConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "UriBasedFileOpener": {
       "oneOf": [
         {
@@ -4662,7 +4940,6 @@
       "description": "Agent-related settings (thread limits, etc.)."
     },
     "allow_login_shell": {
-      "default": true,
       "description": "Whether the model may request a login shell for shell-based tools. Default to `true`\n\nIf `true`, the model may request a login shell (`login = true`), and omitting `login` defaults to using a login shell. If `false`, the model can never use a login shell: `login = true` requests are rejected, and omitting `login` defaults to a non-login shell.",
       "type": "boolean"
     },
@@ -4853,6 +5130,9 @@
         "auth_elicitation": {
           "type": "boolean"
         },
+        "background_paginated_rollout_migration": {
+          "type": "boolean"
+        },
         "browser_use": {
           "type": "boolean"
         },
@@ -4868,7 +5148,13 @@
         "code_mode": {
           "$ref": "#/definitions/FeatureToml_for_CodeModeConfigToml"
         },
+        "code_mode_buffered_exec": {
+          "type": "boolean"
+        },
         "code_mode_host": {
+          "$ref": "#/definitions/FeatureToml_for_CodeModeHostConfigToml"
+        },
+        "code_mode_interrupt": {
           "type": "boolean"
         },
         "code_mode_only": {
@@ -4904,6 +5190,9 @@
         "deferred_executor": {
           "type": "boolean"
         },
+        "deferred_tool_world_state": {
+          "type": "boolean"
+        },
         "elevated_windows_sandbox": {
           "type": "boolean"
         },
@@ -4920,6 +5209,9 @@
           "type": "boolean"
         },
         "exec_permission_approvals": {
+          "type": "boolean"
+        },
+        "executed_tool_call_metadata": {
           "type": "boolean"
         },
         "executor_capability_discovery": {
@@ -4946,6 +5238,12 @@
         "guardian_approval": {
           "type": "boolean"
         },
+        "guardian_reuse_parent_compaction": {
+          "type": "boolean"
+        },
+        "guardianv2": {
+          "type": "boolean"
+        },
         "hooks": {
           "type": "boolean"
         },
@@ -4955,10 +5253,16 @@
         "image_generation": {
           "type": "boolean"
         },
+        "image_resize_notice": {
+          "type": "boolean"
+        },
         "imagegenext": {
           "type": "boolean"
         },
         "in_app_browser": {
+          "type": "boolean"
+        },
+        "in_app_updates": {
           "type": "boolean"
         },
         "item_ids": {
@@ -4971,6 +5275,9 @@
           "type": "boolean"
         },
         "local_thread_store_compression": {
+          "type": "boolean"
+        },
+        "mcp_2026_07_28": {
           "type": "boolean"
         },
         "memories": {
@@ -4995,7 +5302,7 @@
           "$ref": "#/definitions/FeatureToml_for_NetworkProxyConfigToml"
         },
         "non_prefixed_mcp_tool_names": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToml_for_NonPrefixedMcpToolNamesConfigToml"
         },
         "personality": {
           "type": "boolean"
@@ -5013,6 +5320,9 @@
           "type": "boolean"
         },
         "realtime_conversation": {
+          "type": "boolean"
+        },
+        "recommended_plugins": {
           "type": "boolean"
         },
         "remote_compaction_v2": {
@@ -5102,6 +5412,9 @@
         "tool_call_mcp_elicitation": {
           "type": "boolean"
         },
+        "tool_registry": {
+          "$ref": "#/definitions/ToolRegistryConfigToml"
+        },
         "tool_search": {
           "type": "boolean"
         },
@@ -5126,6 +5439,9 @@
         "unified_exec_zsh_fork": {
           "type": "boolean"
         },
+        "unified_image_budget": {
+          "type": "boolean"
+        },
         "use_agent_identity": {
           "type": "boolean"
         },
@@ -5133,6 +5449,9 @@
           "type": "boolean"
         },
         "use_linux_sandbox_bwrap": {
+          "type": "boolean"
+        },
+        "view_image": {
           "type": "boolean"
         },
         "web_search": {
@@ -5446,7 +5765,7 @@
     },
     "project_doc_max_bytes": {
       "default": 32768,
-      "description": "Maximum number of bytes to include from an AGENTS.md project doc file.",
+      "description": "Maximum total bytes of project instruction content across all selected environments.",
       "format": "uint",
       "minimum": 0.0,
       "type": "integer"
@@ -5507,6 +5826,7 @@
       "default": {
         "exclude": null,
         "experimental_use_profile": null,
+        "filters": null,
         "ignore_default_excludes": null,
         "include_only": null,
         "inherit": null,
